@@ -14,6 +14,7 @@ import (
 	platformconfig "github.com/Bringbasket/running-tools/internal/platform/config"
 	"github.com/Bringbasket/running-tools/internal/platform/httpx"
 	"github.com/Bringbasket/running-tools/internal/platform/module"
+	"github.com/Bringbasket/running-tools/internal/platform/persistence"
 	"github.com/Bringbasket/running-tools/internal/platform/systemupdate"
 	"github.com/Bringbasket/running-tools/internal/webui"
 	mail "github.com/Bringbasket/running-tools/modules/mail/backend"
@@ -26,13 +27,30 @@ func main() {
 		logger.Error("invalid configuration", "error", err)
 		os.Exit(1)
 	}
+	persistenceConfig, err := persistence.LoadConfig()
+	if err != nil {
+		logger.Error("invalid persistence configuration", "error", err)
+		os.Exit(1)
+	}
+	startupContext, startupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	persistenceService, err := persistence.Open(startupContext, persistenceConfig)
+	startupCancel()
+	if err != nil {
+		logger.Error("initialize persistence", "error", err)
+		os.Exit(1)
+	}
+	defer persistenceService.Close()
 
 	mux := http.NewServeMux()
 	auth := httpx.APIKey(config.APIKey)
-	mailModule := mail.NewModule(
+	mailModule, err := mail.NewModuleWithPersistence(
 		filepath.Join(config.DataDir, "mail"),
-		os.Getenv("MAIL_CONFIG_PATH"), os.Getenv("MAIL_STATE_DIR"),
+		os.Getenv("MAIL_CONFIG_PATH"), os.Getenv("MAIL_STATE_DIR"), persistenceService,
 	)
+	if err != nil {
+		logger.Error("initialize mail module", "error", err)
+		os.Exit(1)
+	}
 	modules := []module.Backend{mailModule}
 	for _, backend := range modules {
 		backend.RegisterRoutes(mux, auth)
@@ -47,7 +65,16 @@ func main() {
 	updates := systemupdate.New(filepath.Join(config.DataDir, "system"), config.Version, config.RepositoryURL)
 	systemupdate.RegisterRoutes(mux, auth, updates)
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
-		httpx.WriteData(w, r, http.StatusOK, map[string]string{"status": "ok"})
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		defer cancel()
+		data, healthy := persistenceService.Health(ctx)
+		status := http.StatusOK
+		data["status"] = "ok"
+		if !healthy {
+			status = http.StatusServiceUnavailable
+			data["status"] = "error"
+		}
+		httpx.WriteData(w, r, status, data)
 	})
 	mux.Handle("/api/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, http.StatusNotFound, "NOT_FOUND", "not found")

@@ -7,6 +7,11 @@ export interface MailAlias {
   createTimestamp?: number
   anonymousId: string
   origin?: string
+	usedChannel?: 'apple_account' | 'icloud_web'
+	attemptedChannels?: Array<'apple_account' | 'icloud_web'>
+	fallbackUsed?: boolean
+	detailConfirmed?: boolean
+	nextRetryAt?: number | null
 }
 
 export interface AliasQueueStatus {
@@ -57,6 +62,31 @@ export interface MailboxStatus {
   workerRunning: boolean
 }
 
+export interface MailboxSettings {
+  username: string
+  host: string
+  port: number
+  mailbox: string
+  enabled: boolean
+  pollSeconds: number
+  lookbackDays: number
+  cacheMax: number
+  passwordConfigured: boolean
+  source: 'saved' | 'environment'
+}
+
+export interface MailboxSettingsInput {
+  username: string
+  password: string
+  host: string
+  port: number
+  mailbox: string
+  enabled: boolean
+  pollSeconds: number
+  lookbackDays: number
+  cacheMax: number
+}
+
 export interface MailMessage {
   uid: number
   aliases: string[]
@@ -83,6 +113,37 @@ export interface SessionStatus {
   lastError: string | null
   needsReauth: boolean
   hme?: { aliasCount?: number; selectedForwardTo?: string; forwardToEmails?: string[] }
+  appleLogin: AppleLoginStatus
+}
+
+export interface AppleChannelStatus {
+  configured: boolean
+  healthy: boolean
+  appleId?: string
+  lastCheckedAt?: number
+  expiresAt?: number
+  message?: string
+	cooldownUntil?: number
+	cooldownRemainingSeconds?: number
+	lastCreateAt?: number
+	lastCreateError?: string
+	lastCreateErrorCode?: string
+	consecutiveFailures?: number
+}
+
+export interface AppleLoginStatus {
+  icloudWeb: AppleChannelStatus
+  appleAccount: AppleChannelStatus
+  createChannel: 'icloud_web' | 'apple_account'
+}
+
+export interface AppleLoginResult {
+  channel: 'icloud_web' | 'apple_account'
+  needs2FA: boolean
+  pendingId?: string
+  expiresAt?: number
+  message: string
+  appleId?: string
 }
 
 export interface AutoRefreshStatus {
@@ -114,6 +175,9 @@ export interface CreateScheduleStatus {
   lastBatchRequested: number
   lastBatchSuccess: number
   lastBatchStoppedReason: string | null
+	lastUsedChannel?: 'apple_account' | 'icloud_web'
+	lastFallbackUsed?: boolean
+	lastAttemptedChannels?: Array<'apple_account' | 'icloud_web'>
   workerRunning: boolean
   running: boolean
   currentIndex: number

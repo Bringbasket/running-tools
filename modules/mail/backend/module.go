@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/Bringbasket/running-tools/internal/platform/httpx"
+	"github.com/Bringbasket/running-tools/internal/platform/persistence"
 )
 
 type Module struct {
@@ -19,6 +20,14 @@ type Module struct {
 }
 
 func NewModule(dataDir, configPath, stateDir string) *Module {
+	module, err := NewModuleWithPersistence(dataDir, configPath, stateDir, nil)
+	if err != nil {
+		panic(err)
+	}
+	return module
+}
+
+func NewModuleWithPersistence(dataDir, configPath, stateDir string, persistenceService *persistence.Service) (*Module, error) {
 	if configPath == "" {
 		configPath = filepath.Join(dataDir, "hme-config.json")
 	}
@@ -31,7 +40,11 @@ func NewModule(dataDir, configPath, stateDir string) *Module {
 	queue := NewAliasQueue(stateDir, session, gate)
 	creation.SetBlocked(queue.Active)
 	queue.SetBlocked(creation.Running)
-	return &Module{session: session, refresh: NewAutoRefresh(stateDir, session), creation: creation, queue: queue, shares: NewShareLinkStore(stateDir), mailbox: NewMailboxService(stateDir, session), createGate: gate}
+	mailbox, err := NewMailboxServiceWithPersistence(stateDir, session, persistenceService)
+	if err != nil {
+		return nil, err
+	}
+	return &Module{session: session, refresh: NewAutoRefresh(stateDir, session), creation: creation, queue: queue, shares: NewShareLinkStore(stateDir), mailbox: mailbox, createGate: gate}, nil
 }
 
 func (module *Module) ID() string { return "mail" }

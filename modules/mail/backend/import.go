@@ -27,9 +27,12 @@ var coreSessionCookies = []string{
 }
 
 func ParseImportText(text, region string) (ICloudConfig, error) {
-	region, err := normalizeRegion(region)
-	if err != nil {
-		return ICloudConfig{}, err
+	if strings.TrimSpace(region) != "" {
+		var err error
+		region, err = normalizeRegion(region)
+		if err != nil {
+			return ICloudConfig{}, err
+		}
 	}
 	text = strings.TrimSpace(text)
 	if text == "" {
@@ -45,9 +48,12 @@ func ParseImportText(text, region string) (ICloudConfig, error) {
 }
 
 func ParseHMECurl(text, region string) (ICloudConfig, error) {
-	region, err := normalizeRegion(region)
-	if err != nil {
-		return ICloudConfig{}, err
+	if strings.TrimSpace(region) != "" {
+		var err error
+		region, err = normalizeRegion(region)
+		if err != nil {
+			return ICloudConfig{}, err
+		}
 	}
 	rawURL := ""
 	if match := quotedURLPattern.FindStringSubmatch(text); len(match) == 3 {
@@ -124,6 +130,13 @@ func configFromRequest(rawURL, cookie string, headers map[string]string, region 
 	if err := requireCookies(cookie); err != nil {
 		return ICloudConfig{}, err
 	}
+	if strings.TrimSpace(region) == "" {
+		region = regionFromServiceHost(parsed.Hostname())
+	}
+	region, err = normalizeRegion(region)
+	if err != nil {
+		return ICloudConfig{}, err
+	}
 	query := parsed.Query()
 	requiredQuery := func(name string) (string, error) {
 		value := strings.TrimSpace(query.Get(name))
@@ -168,13 +181,17 @@ func configFromRequest(rawURL, cookie string, headers map[string]string, region 
 
 func normalizeRegion(region string) (string, error) {
 	region = strings.ToLower(strings.TrimSpace(region))
-	if region == "" {
-		region = RegionInternational
-	}
 	if region != RegionInternational && region != RegionChina {
 		return "", fmt.Errorf("icloud_region 必须是 international 或 china")
 	}
 	return region, nil
+}
+
+func regionFromServiceHost(host string) string {
+	if strings.HasSuffix(strings.ToLower(strings.TrimSpace(host)), ".icloud.com.cn") {
+		return RegionChina
+	}
+	return RegionInternational
 }
 
 func normalizeServiceHost(host, region string) string {

@@ -13,7 +13,7 @@ const validCurl = `curl --url 'https://p120-maildomainws.icloud.com/v2/hme/list?
   -b 'X-APPLE-WEBAUTH-USER="user"; X-APPLE-WEBAUTH-TOKEN="token"; X-APPLE-DS-WEB-SESSION-TOKEN="session"'`
 
 func TestParseHMECurl(t *testing.T) {
-	config, err := ParseHMECurl(validCurl, RegionInternational)
+	config, err := ParseHMECurl(validCurl, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -22,6 +22,17 @@ func TestParseHMECurl(t *testing.T) {
 	}
 	if config.UserAgent != "Test Browser" || config.Referer != "https://www.icloud.com/icloudplus/" {
 		t.Fatalf("optional headers were not preserved: %#v", config)
+	}
+}
+
+func TestParseHMECurlDetectsChinaRegion(t *testing.T) {
+	chinaCurl := strings.ReplaceAll(validCurl, "icloud.com", "icloud.com.cn")
+	config, err := ParseHMECurl(chinaCurl, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.Host != "p120-maildomainws.icloud.com.cn" || config.Origin != "https://www.icloud.com.cn" || config.Referer != "https://www.icloud.com.cn/icloudplus/" {
+		t.Fatalf("China region was not detected from request URL: %#v", config)
 	}
 }
 
@@ -45,7 +56,7 @@ func TestParseHARCookieArray(t *testing.T) {
 		},
 	}}}}}
 	encoded, _ := json.Marshal(document)
-	config, err := ParseImportText(string(encoded), RegionInternational)
+	config, err := ParseImportText(string(encoded), "")
 	if err != nil {
 		t.Fatal(err)
 	}

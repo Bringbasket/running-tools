@@ -69,6 +69,10 @@ HTML 回填、验证码识别精度和批量创建队列的历史模型。这些
 
 ## IMAP 配置
 
+推荐直接进入前端“收件箱”，点击“IMAP 设置”填写账号、应用专用密码、服务器与同步参数，
+可以先测试连接再保存。配置会持久化到 `data/mail/state/mailbox-config.json`，密码不会通过
+读取接口回显。服务器环境变量仍作为尚未保存网页配置时的兼容默认值：
+
 ```dotenv
 HME_IMAP_USERNAME=your-mailbox@example.com
 HME_IMAP_PASSWORD_FILE=/run/secrets/hme-imap-password

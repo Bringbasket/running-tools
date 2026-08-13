@@ -5,10 +5,13 @@
 
 ## 基础设施状态
 
-生产环境的目标基础设施为 PostgreSQL 15+ 和 Redis 7+。当前版本尚未使用这两个服务，
-因此现有 Compose 不会自动创建或连接数据库、Redis；邮件 Session 和模块状态仍保存
-在 `data/` 文件中。待 Ent schema 和迁移验证完成后，再按技术栈规范增加独立的数据库
-和 Redis 服务，避免影响现有容器。
+生产环境使用 PostgreSQL 15+ 和 Redis 7+。`compose.server.yml` 为本项目创建独立的
+PostgreSQL、Redis 服务、内部网络和命名卷，数据库与 Redis 均不映射宿主机端口，不会
+操作其他 Compose 项目的容器。邮件 Session 与密码仍保存在 `data/` 文件中。
+
+首次上线设置 `RUNNING_STORAGE_MODE=dual`。应用启动时执行版本化迁移，并将现有
+`mailbox-cache.json` 导入 PostgreSQL；原 JSON 不会删除。核对一段时间后再切换为
+`postgres`。
 
 应用通过 `go:embed` 嵌入前端静态资源，发布构建规范命令为
 `go build -tags embed ./cmd/server`。当前数据库和缓存预留不改变现有部署命令。
@@ -25,6 +28,9 @@
     |   `-- state/
     `-- system/
 ```
+
+PostgreSQL 和 Redis 数据保存在当前 Compose 项目自动命名的独立卷中，不放入应用源码
+目录，也不会与其他 Compose 项目的同名逻辑卷共用。
 
 Go 容器不挂载 Docker Socket。网页更新操作只会在 `data/system` 下写入一个小型
 请求文件；由 root 管理的宿主机服务监控该文件，并负责拉取镜像和重启服务。
@@ -88,8 +94,8 @@ systemctl enable --now running-tools-update.path
 镜像，只重新创建 `running-tools` Compose 服务，并等待健康检查。如果新容器未能
 进入健康状态，脚本会恢复上一个镜像。
 
-该脚本根据独立的 Compose 项目和 `app` 服务工作，不会选中或重启服务器上的其他
-Docker Compose 项目。
+该脚本使用 `--no-deps app`，只重建当前 Compose 项目的应用容器；PostgreSQL、Redis
+以及服务器上的其他 Docker Compose 项目不会随应用版本更新而重建。
 
 检查宿主机单元：
 

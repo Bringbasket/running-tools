@@ -6,7 +6,7 @@ COPY frontend ./frontend
 COPY modules/mail/frontend ./modules/mail/frontend
 RUN cd frontend && npm run build
 
-FROM golang:1.26.5-alpine AS backend
+FROM golang:1.24.13-alpine AS backend
 ARG RUNNING_VERSION=0.0.1
 WORKDIR /src
 COPY go.mod go.sum ./

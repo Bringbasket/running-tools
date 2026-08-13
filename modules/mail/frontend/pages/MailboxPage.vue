@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { ChevronLeft, ChevronRight, LoaderCircle, MailOpen, RefreshCw, Trash2, X } from '../../../../frontend/src/icons'
+import { ChevronLeft, ChevronRight, LoaderCircle, MailOpen, RefreshCw, Save, Settings2, ShieldCheck, Trash2, X } from '../../../../frontend/src/icons'
 import { errorMessage } from '../../../../frontend/src/api'
 import { mailAPI } from '../api'
-import type { MailboxStatus, MailMessage } from '../types'
+import type { MailboxSettings, MailboxSettingsInput, MailboxStatus, MailMessage } from '../types'
 
 const status = ref<MailboxStatus | null>(null)
 const loading = ref(false)
 const error = ref('')
+const notice = ref('')
 const alias = ref('')
 const messages = ref<MailMessage[]>([])
 const selected = ref(new Set<string>())
@@ -15,6 +16,18 @@ const detail = ref<MailMessage | null>(null)
 const detailMode = ref<'text' | 'html'>('text')
 const page = ref(1)
 const pageSize = ref(20)
+const settingsOpen = ref(false)
+const settingsLoading = ref(false)
+const settingsSaving = ref(false)
+const settingsTesting = ref(false)
+const settingsError = ref('')
+const settingsNotice = ref('')
+const passwordConfigured = ref(false)
+const settingsSource = ref<MailboxSettings['source']>('environment')
+const settingsForm = ref<MailboxSettingsInput>({
+  username: '', password: '', host: 'imap.gmail.com', port: 993, mailbox: 'INBOX',
+  enabled: false, pollSeconds: 120, lookbackDays: 90, cacheMax: 5000,
+})
 let stopped = false
 
 const filtered = computed(() => {
@@ -55,6 +68,63 @@ async function run() {
     error.value = errorMessage(reason)
   } finally {
     loading.value = false
+  }
+}
+function applySettings(settings: MailboxSettings) {
+  settingsForm.value = {
+    username: settings.username,
+    password: '',
+    host: settings.host,
+    port: settings.port,
+    mailbox: settings.mailbox,
+    enabled: settings.enabled,
+    pollSeconds: settings.pollSeconds,
+    lookbackDays: settings.lookbackDays,
+    cacheMax: settings.cacheMax,
+  }
+  passwordConfigured.value = settings.passwordConfigured
+  settingsSource.value = settings.source
+}
+async function openSettings() {
+  settingsOpen.value = true
+  settingsLoading.value = true
+  settingsError.value = ''
+  settingsNotice.value = ''
+  try {
+    applySettings(await mailAPI.mailboxSettings())
+  } catch (reason) {
+    settingsError.value = errorMessage(reason)
+  } finally {
+    settingsLoading.value = false
+  }
+}
+async function testSettings() {
+  settingsTesting.value = true
+  settingsError.value = ''
+  settingsNotice.value = ''
+  try {
+    await mailAPI.testMailboxSettings(settingsForm.value)
+    settingsNotice.value = '连接成功，账号和邮箱目录可用'
+  } catch (reason) {
+    settingsError.value = errorMessage(reason)
+  } finally {
+    settingsTesting.value = false
+  }
+}
+async function saveSettings() {
+  settingsSaving.value = true
+  settingsError.value = ''
+  settingsNotice.value = ''
+  try {
+    const saved = await mailAPI.updateMailboxSettings(settingsForm.value)
+    applySettings(saved)
+    settingsOpen.value = false
+    notice.value = saved.enabled ? 'IMAP 设置已保存，后台同步已启动' : 'IMAP 设置已保存，后台同步未启用'
+    await load(false)
+  } catch (reason) {
+    settingsError.value = errorMessage(reason)
+  } finally {
+    settingsSaving.value = false
   }
 }
 async function watchMailbox() {
@@ -131,13 +201,15 @@ onBeforeUnmount(() => { stopped = true })
     <div class="page-heading">
       <div><h2>收件箱</h2><p>查看隐藏邮箱转发的最近邮件和验证码。</p></div>
       <div class="page-actions">
+        <button class="button ghost" :disabled="settingsLoading" @click="openSettings"><Settings2 :size="16" />IMAP 设置</button>
         <button class="button ghost" :disabled="loading" @click="load()"><RefreshCw :size="16" :class="{ spin: loading }" />刷新列表</button>
         <button class="button primary" :disabled="loading || !status?.configured" @click="run"><LoaderCircle v-if="loading" :size="16" class="spin" /><MailOpen v-else :size="16" />立即同步</button>
       </div>
     </div>
 
     <p v-if="error" class="message error">{{ error }}</p>
-    <p v-if="!status?.configured" class="message warning">请在服务端配置 IMAP 收件账号和应用专用密码。</p>
+    <p v-if="notice" class="message success">{{ notice }}</p>
+    <div v-if="!status?.configured" class="message warning mailbox-warning"><span>尚未配置 IMAP 收件账号和应用专用密码。</span><button class="button ghost compact" @click="openSettings"><Settings2 :size="15" />现在配置</button></div>
 
     <div class="mailbox-summary" aria-label="收件箱同步状态">
       <span class="state-dot" :class="{ active: status?.workerRunning }"></span>
@@ -181,6 +253,31 @@ onBeforeUnmount(() => { stopped = true })
   </section>
 
   <Teleport to="body">
+    <div v-if="settingsOpen" class="dialog-backdrop" @click.self="settingsOpen = false">
+      <article class="dialog mailbox-settings-dialog">
+        <div class="dialog-heading"><div><h2>IMAP 收件设置</h2><p>通过 TLS 只读同步转发到主邮箱的邮件。</p></div><button class="icon-button" title="关闭" :disabled="settingsSaving || settingsTesting" @click="settingsOpen = false"><X :size="18" /></button></div>
+        <p v-if="settingsError" class="message error">{{ settingsError }}</p>
+        <p v-if="settingsNotice" class="message success">{{ settingsNotice }}</p>
+        <div v-if="settingsLoading" class="settings-loading"><LoaderCircle :size="20" class="spin" />正在读取设置</div>
+        <form v-else class="imap-form" @submit.prevent="saveSettings">
+          <label class="toggle-row"><span><strong>启用后台同步</strong><small>优先实时监听，不支持 IMAP IDLE 时按间隔轮询。</small></span><input v-model="settingsForm.enabled" type="checkbox" role="switch" /></label>
+          <div class="imap-form-grid">
+            <label class="field full"><span>IMAP 账号</span><input v-model.trim="settingsForm.username" type="text" autocomplete="username" placeholder="mail@example.com" maxlength="320" /></label>
+            <label class="field full"><span>应用专用密码</span><input v-model="settingsForm.password" type="password" autocomplete="new-password" :placeholder="passwordConfigured ? '已保存；留空表示不修改' : '请输入应用专用密码'" maxlength="4096" /><small>密码只保存到服务器数据目录，页面和接口不会读回明文。</small></label>
+            <label class="field host-field"><span>IMAP 服务器</span><input v-model.trim="settingsForm.host" type="text" placeholder="imap.gmail.com" /></label>
+            <label class="field port-field"><span>端口</span><input v-model.number="settingsForm.port" type="number" min="1" max="65535" /></label>
+            <label class="field full"><span>邮箱目录</span><input v-model.trim="settingsForm.mailbox" type="text" placeholder="INBOX" maxlength="255" /></label>
+          </div>
+          <div class="imap-advanced">
+            <label class="field"><span>轮询间隔（秒）</span><input v-model.number="settingsForm.pollSeconds" type="number" min="30" max="86400" step="10" /></label>
+            <label class="field"><span>首次回看（天）</span><input v-model.number="settingsForm.lookbackDays" type="number" min="1" max="3650" /></label>
+            <label class="field"><span>缓存上限（封）</span><input v-model.number="settingsForm.cacheMax" type="number" min="100" max="50000" step="100" /></label>
+          </div>
+          <div class="settings-origin"><ShieldCheck :size="15" /><span>{{ settingsSource === 'saved' ? '当前使用网页保存的配置' : '当前读取服务器环境变量默认值' }}</span></div>
+          <div class="dialog-actions imap-actions"><button type="button" class="button ghost" :disabled="settingsSaving || settingsTesting" @click="testSettings"><LoaderCircle v-if="settingsTesting" :size="16" class="spin" /><ShieldCheck v-else :size="16" />测试连接</button><div><button type="button" class="button ghost" :disabled="settingsSaving || settingsTesting" @click="settingsOpen = false">取消</button><button type="submit" class="button primary" :disabled="settingsSaving || settingsTesting"><LoaderCircle v-if="settingsSaving" :size="16" class="spin" /><Save v-else :size="16" />保存设置</button></div></div>
+        </form>
+      </article>
+    </div>
     <div v-if="detail" class="dialog-backdrop" @click.self="detail = null">
       <article class="dialog mail-detail">
         <div class="dialog-heading"><div><h2>{{ detail.subject || '无主题' }}</h2><p>{{ detail.from }} · {{ new Date(detail.date * 1000).toLocaleString('zh-CN') }}</p></div><button class="icon-button" title="关闭" @click="detail = null"><X :size="18" /></button></div>
@@ -197,6 +294,8 @@ onBeforeUnmount(() => { stopped = true })
 
 <style scoped>
 .mailbox-page { gap: 18px; }
+.mailbox-warning { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.button.compact { min-height: 30px; padding: 0 10px; white-space: nowrap; }
 .mailbox-summary { display: flex; min-height: 42px; align-items: center; gap: 10px; padding: 0 14px; color: var(--muted); background: var(--surface); border: 1px solid var(--border); border-radius: 7px; font-size: 12px; }
 .mailbox-summary strong { color: var(--text); }
 .state-dot { width: 7px; height: 7px; flex: 0 0 7px; background: var(--muted); border-radius: 50%; }
@@ -228,6 +327,15 @@ onBeforeUnmount(() => { stopped = true })
 .mail-detail pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 13px/1.65 inherit; }
 .mail-html { background: #fff; }
 .muted { color: var(--muted); }
+.mailbox-settings-dialog { width: min(650px, calc(100vw - 32px)); max-width: 650px; }
+.settings-loading { display: flex; min-height: 220px; align-items: center; justify-content: center; gap: 8px; color: var(--muted); }
+.imap-form-grid { display: grid; grid-template-columns: minmax(0, 1fr) 110px; gap: 14px; }
+.imap-form-grid .full { grid-column: 1 / -1; }
+.field small { color: var(--muted); font-size: 11px; line-height: 1.45; }
+.imap-advanced { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-top: 14px; padding-top: 16px; border-top: 1px solid var(--border-soft); }
+.settings-origin { display: flex; align-items: center; gap: 7px; margin-top: 14px; color: var(--muted); font-size: 11px; }
+.imap-actions { align-items: center; justify-content: space-between; gap: 12px; }
+.imap-actions > div { display: flex; gap: 8px; }
 @media (max-width: 760px) {
   .mailbox-summary { flex-wrap: wrap; padding: 10px 12px; }
   .summary-separator { display: none; }
@@ -253,5 +361,14 @@ onBeforeUnmount(() => { stopped = true })
   tbody tr.empty-row { min-height: 180px; padding: 0; }
   tbody tr.empty-row td.empty-state { position: static; display: flex; width: 100%; min-height: 180px; align-items: center; justify-content: center; padding: 24px; }
   .detail-toolbar { align-items: flex-start; flex-direction: column; }
+  .mailbox-warning, .imap-actions { align-items: stretch; flex-direction: column; }
+  .mailbox-warning .button { width: 100%; }
+  .imap-advanced { grid-template-columns: 1fr; }
+  .imap-actions > div { display: grid; grid-template-columns: 1fr 1fr; }
+}
+@media (max-width: 420px) {
+  .imap-form-grid { grid-template-columns: 1fr; }
+  .imap-form-grid .full { grid-column: auto; }
+  .imap-actions > div { grid-template-columns: 1fr; }
 }
 </style>

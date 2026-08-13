@@ -54,6 +54,8 @@ JSON 接口统一使用以下响应结构：
 | GET | `/api/mail/v1/session/status` | 读取持久化 Session 状态 |
 | POST | `/api/mail/v1/session/refresh` | 立即检查当前 Session |
 | POST | `/api/mail/v1/session/import` | 从 cURL 或 HAR 导入 Session |
+| POST | `/api/mail/v1/session/apple-login/start` | 使用 Apple ID 开始 SRP 协议登录 |
+| POST | `/api/mail/v1/session/apple-login/verify` | 提交 6 位验证码并完成登录 |
 | GET | `/api/mail/v1/auto-refresh` | 读取自动刷新设置 |
 | POST | `/api/mail/v1/auto-refresh` | 修改自动刷新设置 |
 | POST | `/api/mail/v1/auto-refresh/run` | 立即执行一次自动刷新 |
@@ -68,6 +70,8 @@ JSON 接口统一使用以下响应结构：
 | POST | `/api/mail/v1/share-links/{id}/revoke` | 撤销分享链接 |
 | GET | `/api/mail/v1/mail/messages?alias=...` | 读取指定隐藏邮箱的邮件缓存 |
 | GET/POST | `/api/mail/v1/mail/sync/{status,run}` | 查看状态或立即同步 IMAP |
+| GET/PUT | `/api/mail/v1/mail/settings` | 读取或保存 IMAP 设置，密码不回显 |
+| POST | `/api/mail/v1/mail/settings/test` | 使用当前表单测试只读 IMAP 连接 |
 | GET | `/api/mail/v1/mail/recent` | 最近 3 天聚合邮件 |
 | GET | `/api/mail/v1/mail/messages/{uid}?alias=...` | 单封邮件详情与代码识别 |
 | POST | `/api/mail/v1/mail/messages/{uid}/hide` | 从本地缓存隐藏邮件 |
@@ -89,22 +93,61 @@ Content-Type: application/json
 
 `label` 不能为空，`note` 可以为空字符串。
 
-### 导入 Session
-
-`curl_text` 可以是浏览器的 **Copy as cURL (bash)** 内容，也可以是包含请求
-Cookie 的 HAR JSON 字符串。
+成功结果会额外返回本次创建路由：
 
 ```json
 {
-  "curl_text": "curl ... /v2/hme/list ...",
-  "icloud_region": "international"
+  "usedChannel": "apple_account",
+  "attemptedChannels": ["apple_account"],
+  "fallbackUsed": false,
+  "detailConfirmed": true,
+  "nextRetryAt": null
 }
 ```
 
-`icloud_region` 可选值：
+`usedChannel` 表示实际成功通道；`attemptedChannels` 是按顺序尝试的通道；
+`detailConfirmed` 表示 Apple Account 创建后是否成功读取了完整详情。详情查询失败不会把
+已经成功的创建标记为失败。
 
-- `international`：iCloud 国际版；
-- `china`：iCloud 中国大陆版。
+### 导入 Session
+
+推荐优先使用协议登录。开始登录请求：
+
+```json
+{
+  "appleId": "owner@example.com",
+  "password": "本次登录使用的密码",
+  "channel": "apple_account",
+  "twoFactorMethod": "trusted_device"
+}
+```
+
+`channel` 可选 `apple_account` 或 `icloud_web`，前端默认选择 `apple_account`。Apple Account
+管理态用于隐藏邮箱列表、创建、编辑、启停和删除；iCloud Web 主会话用于兼容旧接口并作为
+备用通道。`twoFactorMethod` 可选 `trusted_device` 或 `phone`。`iCloud Web` 协议登录会根据
+Apple 返回的账号国家或目标域名自动选择 `icloud.com` 或 `icloud.com.cn`，无需指定区域；
+`region` 仅作为旧客户端的可选兼容字段保留。
+
+需要二次验证时，开始接口返回内存态 `pendingId`，有效期为 10 分钟：
+
+```json
+{"pendingId":"...","code":"123456"}
+```
+
+密码和验证码只参与当次 Apple 协议请求，不会写入状态文件、日志或 API 响应。接口也不
+返回 Cookie、`scnt`、Session ID 或动态 API Key。
+
+手动导入是协议登录不可用时的兼容方案。`curl_text` 可以是浏览器的
+**Copy as cURL (bash)** 内容，也可以是包含请求 Cookie 的 HAR JSON 字符串。
+
+```json
+{
+  "curl_text": "curl ... /v2/hme/list ..."
+}
+```
+
+导入器根据请求 URL 中的 `maildomainws.icloud.com` 或 `maildomainws.icloud.com.cn`
+自动识别区域。旧客户端仍可通过可选的 `icloud_region` 显式覆盖识别结果。
 
 导入器要求 Cookie 中包含：
 
@@ -113,6 +156,20 @@ Cookie 的 HAR JSON 字符串。
 - `X-APPLE-WEBAUTH-TOKEN`
 
 Session 状态和错误响应不会返回持久化的 Cookie 内容。
+
+### 创建通道
+
+单次创建和自动创建计划优先使用健康且与当前 iCloud Web 属于同一 Apple ID 的
+Apple Account 登录态。新接口在生成候选地址前失败时可以回退到 iCloud Web；确认创建
+请求一旦开始，结果可能已经生效，此时不会自动回退，避免重复创建。
+
+Apple Account 管理态过期或首次返回认证失效时，服务会在确认创建之前自动刷新并安全重试
+一次。两个通道的失败和冷却状态保存在 `data/mail/state/create-channels.json`；某通道冷却
+期间自动跳过该通道。Apple 返回 `retryAfter` 时按其指定时间冷却，否则限额使用 2 分钟、
+其他暂时错误使用 30 秒。
+
+持久化批量队列继续使用 iCloud Web 的“生成候选 + 确认占用”流程。队列会保存中间候选
+状态以支持重启恢复，因此不会在任务中途切换创建协议。
 
 ### 自动刷新
 
@@ -130,6 +187,7 @@ Session 状态和错误响应不会返回持久化的 Cookie 内容。
 ```
 
 `enabled` 控制后台周期执行，`run` 可以在计划关闭时手动执行一轮。同一时间只允许一轮创建任务。
+状态中的 `lastUsedChannel`、`lastFallbackUsed` 和 `lastAttemptedChannels` 用于显示最近一次成功创建的实际通道和自动兜底情况。
 
 ### 持久化批量队列
 
@@ -141,7 +199,28 @@ Session 状态和错误响应不会返回持久化的 Cookie 内容。
 
 ### IMAP 收件箱
 
-收件箱使用服务器环境变量中的 IMAP 凭据，通过 TLS 只读连接。首次同步按配置的回看天数读取，之后使用持久 UID 游标增量同步；单批最多 200 封，积压批次会继续推进。Worker 优先使用 IMAP IDLE，服务器不支持时自动按配置轮询。只缓存属于当前启用隐藏邮箱白名单的邮件，响应不会包含 IMAP 密码。
+收件箱可以在前端“IMAP 设置”中配置，也兼容服务器环境变量作为首次默认值。设置保存到
+`data/mail/state/mailbox-config.json`，文件权限为 `0600`；密码只接受写入，读取接口仅返回
+`passwordConfigured`，不会返回密码正文。
+
+```json
+{
+  "username": "mail@example.com",
+  "password": "应用专用密码；留空表示保留原密码",
+  "host": "imap.gmail.com",
+  "port": 993,
+  "mailbox": "INBOX",
+  "enabled": true,
+  "pollSeconds": 120,
+  "lookbackDays": 90,
+  "cacheMax": 5000
+}
+```
+
+所有连接固定使用 TLS，并以只读模式选择邮箱。首次同步按配置的回看天数读取，之后使用持久
+UID 游标增量同步；单批最多 200 封，积压批次会继续推进。Worker 优先使用 IMAP IDLE，
+服务器不支持时自动按配置轮询。只缓存属于当前启用隐藏邮箱白名单的邮件。账号、主机、端口
+或邮箱目录发生变化时会清空上一连接目标的本地邮件缓存，避免混用 UID 和邮件内容。
 
 列表接口只返回 160 字纯文本预览。单封详情按需返回完整纯文本和经过白名单清理的 `safeHtml`；脚本、表单、附件、远程图片、样式和非 HTTP(S) 链接均被移除。前端仅在 sandbox iframe 中显示该内容。
 
@@ -162,6 +241,10 @@ Session 状态和错误响应不会返回持久化的 Cookie 内容。
 | 409 | `UPDATE_IN_PROGRESS` | 已有更新任务正在执行 |
 | 409 | `QUEUE_ACTIVE` | 已有批量队列正在执行 |
 | 409 | `RESULT_CONFIRMATION_REQUIRED` | 上次保留结果不明确，需要确认 |
+| 400 | `APPLE_ACCOUNT_MISMATCH` | Apple Account 与当前 iCloud Web 不是同一账号 |
+| 400 | `QUEUE_ACCOUNT_MISMATCH` | 活动队列绑定了另一个 iCloud 账号 |
+| 502 | `APPLE_PROTOCOL_ERROR` | Apple 登录协议临时失败或被拒绝 |
+| 502 | `APPLE_ACCOUNT_EXPIRED` | Apple Account 短时管理态失效 |
 | 503 | `MAILBOX_UNAVAILABLE` | IMAP 未配置、认证失败或暂时不可用 |
 | 502 | `ICLOUD_ERROR` | iCloud 返回错误或异常响应 |
 | 500 | `STORAGE_ERROR` | 状态文件写入失败 |

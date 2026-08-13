@@ -61,6 +61,11 @@
     margin: 0;
   }
 
+  html {
+    overflow-y: scroll;
+    scrollbar-gutter: stable;
+  }
+
   body {
     min-width: 320px;
     overflow-x: hidden;
@@ -448,6 +453,7 @@
     flex: 1;
     padding: 18px 12px;
     overflow-y: auto;
+    scrollbar-gutter: stable;
   }
 
   .nav-section-label {
@@ -508,14 +514,14 @@
 
   .nav-children {
     position: relative;
-    margin: 4px 0 0 17px;
-    padding-left: 11px;
-    border-left: 1px solid var(--border);
+    width: 100%;
+    margin: 4px 0 0;
   }
 
   .nav-link {
     min-height: 39px;
     margin: 2px 0;
+    padding-left: 28px;
     font-size: 13px;
     font-weight: 550;
   }
@@ -539,6 +545,7 @@
   }
 
   .sidebar-collapsed .nav-children {
+    width: 100%;
     margin: 4px 0 0;
     padding: 0;
     border: 0;
@@ -732,12 +739,19 @@
   }
 
   .page-area {
+    --page-content-max: 1440px;
     padding: 28px;
   }
 
   .page {
-    width: min(1440px, 100%);
+    width: 100%;
+    max-width: var(--page-content-max);
+    min-width: 0;
     margin: 0 auto;
+  }
+
+  .page > * {
+    min-width: 0;
   }
 
   .page-heading {
@@ -766,6 +780,7 @@
 
   .button {
     display: inline-flex;
+    flex: 0 0 auto;
     min-height: 38px;
     align-items: center;
     justify-content: center;
@@ -817,6 +832,10 @@
 
   .button.full {
     width: 100%;
+  }
+
+  .button > svg {
+    flex: 0 0 auto;
   }
 
   .metric-strip {
@@ -1772,9 +1791,14 @@
   }
 
   .sidebar-collapsed .nav-children {
-    margin: 4px 0 0 17px;
-    padding-left: 11px;
-    border-left: 1px solid var(--border);
+    width: 100%;
+    margin: 4px 0 0;
+    padding: 0;
+    border: 0;
+  }
+
+  .sidebar-collapsed .nav-link {
+    padding-left: 28px;
   }
 
   .collapse-button {

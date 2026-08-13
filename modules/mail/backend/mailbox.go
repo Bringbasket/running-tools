@@ -9,13 +9,13 @@ import (
 	"fmt"
 	stdhtml "html"
 	"io"
+	"log/slog"
 	"mime"
 	"mime/multipart"
 	"mime/quotedprintable"
 	"net"
 	"net/mail"
 	"net/url"
-	"os"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -25,7 +25,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Bringbasket/running-tools/internal/platform/storage"
+	"github.com/Bringbasket/running-tools/internal/platform/persistence"
 	"github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
 )
@@ -65,14 +65,17 @@ type mailboxCache struct {
 	AllowedAliases []string      `json:"allowedAliases,omitempty"`
 }
 type mailboxConfig struct {
-	Username, Password, Host, Mailbox string
-	Port, LookbackDays, CacheMax      int
-	Enabled                           bool
+	Username, Password, Host, Mailbox         string
+	Port, PollSeconds, LookbackDays, CacheMax int
+	Enabled                                   bool
+	Source                                    string
+	PasswordStored                            bool
 }
 type MailboxService struct {
 	mu            sync.Mutex
 	syncMu        sync.Mutex
 	path          string
+	settingsPath  string
 	session       *SessionManager
 	stop          chan struct{}
 	done          chan struct{}
@@ -80,15 +83,34 @@ type MailboxService struct {
 	revisionEvent chan struct{}
 	workerRunning bool
 	workerMode    string
+	repository    mailboxRepository
+	persistence   *persistence.Service
+	lastCache     mailboxCache
+	cacheLoaded   bool
+	lastLoadErr   error
 }
 
 func NewMailboxService(stateDir string, session *SessionManager) *MailboxService {
-	return &MailboxService{
+	service := &MailboxService{
 		path:          filepath.Join(stateDir, "mailbox-cache.json"),
+		settingsPath:  defaultMailboxSettingsPath(stateDir),
 		session:       session,
 		wake:          make(chan struct{}, 1),
 		revisionEvent: make(chan struct{}),
 	}
+	service.repository = &jsonMailboxRepository{path: service.path}
+	return service
+}
+
+func NewMailboxServiceWithPersistence(stateDir string, session *SessionManager, persistenceService *persistence.Service) (*MailboxService, error) {
+	service := NewMailboxService(stateDir, session)
+	repository, err := newMailboxRepository(service.path, persistenceService)
+	if err != nil {
+		return nil, err
+	}
+	service.repository = repository
+	service.persistence = persistenceService
+	return service, nil
 }
 func (s *MailboxService) Start() {
 	s.mu.Lock()
@@ -118,11 +140,11 @@ func (s *MailboxService) Start() {
 			_ = s.SyncFromSession()
 			cfg = s.config()
 			s.setWorkerState(true, "idle")
-			idleSupported, changed := waitForIMAPChange(cfg, time.Duration(mailboxPollSeconds())*time.Second, stop, s.wake)
+			idleSupported, changed := waitForIMAPChange(cfg, time.Duration(cfg.PollSeconds)*time.Second, stop, s.wake)
 			if !idleSupported {
 				s.setWorkerState(true, "poll")
 				select {
-				case <-time.After(time.Duration(mailboxPollSeconds()) * time.Second):
+				case <-time.After(time.Duration(cfg.PollSeconds) * time.Second):
 				case <-s.wake:
 				case <-stop:
 					s.setWorkerState(false, "stopped")
@@ -173,19 +195,8 @@ func (s *MailboxService) setWorkerState(running bool, mode string) {
 	s.workerMode = mode
 	s.mu.Unlock()
 }
-func mailboxPollSeconds() int {
-	value, _ := strconv.Atoi(os.Getenv("HME_MAIL_SYNC_POLL_SECONDS"))
-	if value < 30 {
-		value = 120
-	}
-	return value
-}
 func (s *MailboxService) SyncFromSession() error {
-	client, err := s.session.Client()
-	if err != nil {
-		return err
-	}
-	aliases, err := client.ListAliases(context.Background())
+	aliases, err := s.session.ListAliases(context.Background())
 	if err != nil {
 		return err
 	}
@@ -201,44 +212,32 @@ func (s *MailboxService) SyncFromSession() error {
 	_, err = s.RunSync(addresses)
 	return err
 }
-func (s *MailboxService) config() mailboxConfig {
-	user := strings.TrimSpace(os.Getenv("HME_IMAP_USERNAME"))
-	password := strings.TrimSpace(os.Getenv("HME_IMAP_PASSWORD"))
-	if file := strings.TrimSpace(os.Getenv("HME_IMAP_PASSWORD_FILE")); password == "" && file != "" {
-		if data, err := os.ReadFile(file); err == nil {
-			password = strings.TrimSpace(string(data))
-		}
-	}
-	host := strings.TrimSpace(os.Getenv("HME_IMAP_HOST"))
-	if host == "" {
-		host = "imap.gmail.com"
-	}
-	port, _ := strconv.Atoi(os.Getenv("HME_IMAP_PORT"))
-	if port < 1 || port > 65535 {
-		port = 993
-	}
-	mailbox := strings.TrimSpace(os.Getenv("HME_IMAP_MAILBOX"))
-	if mailbox == "" {
-		mailbox = "INBOX"
-	}
-	enabled := strings.EqualFold(strings.TrimSpace(os.Getenv("HME_MAIL_SYNC_ENABLED")), "true") || os.Getenv("HME_MAIL_SYNC_ENABLED") == "1"
-	lookbackDays, _ := strconv.Atoi(os.Getenv("HME_IMAP_LOOKBACK_DAYS"))
-	if lookbackDays < 1 || lookbackDays > 3650 {
-		lookbackDays = 90
-	}
-	cacheMax, _ := strconv.Atoi(os.Getenv("HME_IMAP_CACHE_MAX_MESSAGES"))
-	if cacheMax < 100 || cacheMax > 50000 {
-		cacheMax = 5000
-	}
-	return mailboxConfig{Username: user, Password: password, Host: host, Port: port, Mailbox: mailbox, Enabled: enabled, LookbackDays: lookbackDays, CacheMax: cacheMax}
-}
 func (s *MailboxService) loadLocked() mailboxCache {
-	var cache mailboxCache
-	_ = storage.ReadJSON(s.path, &cache)
-	if cache.Messages == nil {
-		cache.Messages = []MailMessage{}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cache, _, err := s.repository.Load(ctx)
+	if err != nil {
+		s.lastLoadErr = err
+		if s.cacheLoaded {
+			return s.lastCache
+		}
+		return normalizedMailboxCache(mailboxCache{Status: MailboxStatus{LastError: "邮箱存储读取失败: " + safeErrorText(err)}})
 	}
+	s.lastCache = cache
+	s.cacheLoaded = true
+	s.lastLoadErr = nil
 	return cache
+}
+
+func (s *MailboxService) saveLocked(cache mailboxCache) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := s.repository.Save(ctx, cache); err != nil {
+		return err
+	}
+	s.lastCache = cache
+	s.cacheLoaded = true
+	return nil
 }
 func (s *MailboxService) Status() MailboxStatus {
 	s.mu.Lock()
@@ -259,6 +258,7 @@ func (s *MailboxService) Messages(alias string, limit int) map[string]any {
 	defer s.mu.Unlock()
 	cache := s.loadLocked()
 	cfg := s.config()
+	cache.Status = s.statusWithConfig(cache.Status, cfg)
 	alias = strings.ToLower(strings.TrimSpace(alias))
 	if limit < 1 {
 		limit = 20
@@ -289,6 +289,7 @@ func (s *MailboxService) Recent(limit int) map[string]any {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	cache := s.loadLocked()
+	cache.Status = s.statusWithConfig(cache.Status, s.config())
 	if limit < 1 {
 		limit = 200
 	}
@@ -350,6 +351,9 @@ func (s *MailboxService) Hide(alias string, uid uint32, uidValidity uint32, gene
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	cache := s.loadLocked()
+	if s.lastLoadErr != nil {
+		return nil, fmt.Errorf("读取邮箱存储失败: %w", s.lastLoadErr)
+	}
 	if uidValidity != cache.Status.UIDValidity || generation == "" || generation != cache.Status.MailboxGeneration {
 		return nil, errors.New("邮箱缓存版本已变化，请刷新后重试")
 	}
@@ -382,7 +386,7 @@ func (s *MailboxService) Hide(alias string, uid uint32, uidValidity uint32, gene
 	}
 	if newlyHidden > 0 {
 		cache.Status.Revision++
-		if err := storage.WriteJSON(s.path, cache, 0o600); err != nil {
+		if err := s.saveLocked(cache); err != nil {
 			return nil, err
 		}
 		s.notifyRevisionLocked()
@@ -397,6 +401,9 @@ func (s *MailboxService) HideBatch(items []struct {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	cache := s.loadLocked()
+	if s.lastLoadErr != nil {
+		return nil, fmt.Errorf("读取邮箱存储失败: %w", s.lastLoadErr)
+	}
 	if uidValidity != cache.Status.UIDValidity || generation == "" || generation != cache.Status.MailboxGeneration {
 		return nil, errors.New("邮箱缓存版本已变化，请刷新后重试")
 	}
@@ -449,7 +456,7 @@ func (s *MailboxService) HideBatch(items []struct {
 	}
 	if newUIDs > 0 {
 		cache.Status.Revision++
-		if err := storage.WriteJSON(s.path, cache, 0o600); err != nil {
+		if err := s.saveLocked(cache); err != nil {
 			return nil, err
 		}
 		s.notifyRevisionLocked()
@@ -483,13 +490,31 @@ func (s *MailboxService) notifyRevisionLocked() {
 func (s *MailboxService) RunSync(aliases []string) (MailboxStatus, error) {
 	s.syncMu.Lock()
 	defer s.syncMu.Unlock()
+	if s.persistence != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		release, acquired, lockErr := s.persistence.AcquireLock(ctx, "mail:imap-sync")
+		cancel()
+		if lockErr == nil && !acquired {
+			return s.Status(), errors.New("另一实例正在同步收件箱")
+		}
+		if lockErr == nil {
+			defer release()
+		} else {
+			slog.Warn("Redis 同步锁不可用，已回退到本进程锁", "error", safeErrorText(lockErr))
+		}
+	}
 
 	s.mu.Lock()
 	cfg := s.config()
 	cache := s.loadLocked()
+	if s.lastLoadErr != nil {
+		err := s.lastLoadErr
+		s.mu.Unlock()
+		return MailboxStatus{LastError: "邮箱存储读取失败: " + safeErrorText(err)}, err
+	}
 	if cfg.Username == "" || cfg.Password == "" {
 		cache.Status = s.statusWithConfig(cache.Status, cfg)
-		cache.Status.LastError = "请配置 HME_IMAP_USERNAME 和 HME_IMAP_PASSWORD 或 HME_IMAP_PASSWORD_FILE"
+		cache.Status.LastError = "请在收件箱设置中配置 IMAP 账号和应用专用密码"
 		s.mu.Unlock()
 		return cache.Status, errors.New(cache.Status.LastError)
 	}
@@ -517,7 +542,7 @@ func (s *MailboxService) RunSync(aliases []string) (MailboxStatus, error) {
 	cache.Status.LastSyncAt = &now
 	if err != nil {
 		cache.Status.LastError = safeErrorText(err)
-		_ = storage.WriteJSON(s.path, cache, 0o600)
+		_ = s.saveLocked(cache)
 		return cache.Status, err
 	}
 	generation := mailboxGeneration(cfg, uidValidity)
@@ -538,7 +563,7 @@ func (s *MailboxService) RunSync(aliases []string) (MailboxStatus, error) {
 	if changed {
 		cache.Status.Revision++
 	}
-	if err := storage.WriteJSON(s.path, cache, 0o600); err != nil {
+	if err := s.saveLocked(cache); err != nil {
 		return cache.Status, err
 	}
 	if changed {
@@ -558,7 +583,7 @@ func (s *MailboxService) statusWithConfig(status MailboxStatus, cfg mailboxConfi
 }
 
 func fetchIMAP(cfg mailboxConfig, aliases []string, previousUIDValidity, afterUID uint32) ([]MailMessage, uint32, uint32, error) {
-	client, err := imapclient.DialTLS(fmt.Sprintf("%s:%d", cfg.Host, cfg.Port), &imapclient.Options{Dialer: &net.Dialer{Timeout: 20 * time.Second}})
+	client, err := imapclient.DialTLS(net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)), &imapclient.Options{Dialer: &net.Dialer{Timeout: 20 * time.Second}})
 	if err != nil {
 		return nil, 0, afterUID, fmt.Errorf("IMAP TLS 连接失败: %w", err)
 	}
@@ -705,7 +730,7 @@ func waitForIMAPChange(cfg mailboxConfig, timeout time.Duration, stop <-chan str
 			},
 		},
 	}
-	client, err := imapclient.DialTLS(fmt.Sprintf("%s:%d", cfg.Host, cfg.Port), options)
+	client, err := imapclient.DialTLS(net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)), options)
 	if err != nil {
 		return false, false
 	}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,29 +23,39 @@ type SessionState struct {
 }
 
 type SessionStatus struct {
-	MetadataDetected bool      `json:"metadataDetected"`
-	Metadata         *Metadata `json:"metadata"`
-	PersistedSession bool      `json:"persistedSession"`
-	ConfigPath       string    `json:"configPath"`
-	ConfigUpdatedAt  *float64  `json:"configUpdatedAt"`
-	LastSavedAt      *float64  `json:"lastSavedAt"`
+	MetadataDetected bool             `json:"metadataDetected"`
+	Metadata         *Metadata        `json:"metadata"`
+	PersistedSession bool             `json:"persistedSession"`
+	ConfigPath       string           `json:"configPath"`
+	ConfigUpdatedAt  *float64         `json:"configUpdatedAt"`
+	LastSavedAt      *float64         `json:"lastSavedAt"`
+	AppleLogin       AppleLoginStatus `json:"appleLogin"`
 	SessionState
 }
 
 type SessionManager struct {
-	mu           sync.RWMutex
-	configPath   string
-	metadataPath string
-	statePath    string
-	newClient    func(ICloudConfig) (*Client, error)
+	mu                sync.RWMutex
+	configPath        string
+	metadataPath      string
+	statePath         string
+	appleAccountPath  string
+	createChannelPath string
+	appleAuth         *AppleAuthClient
+	appleOperation    sync.Mutex
+	createOperation   sync.Mutex
+	channelStateMu    sync.Mutex
+	newClient         func(ICloudConfig) (*Client, error)
 }
 
 func NewSessionManager(configPath, stateDir string) *SessionManager {
 	return &SessionManager{
-		configPath:   configPath,
-		metadataPath: filepath.Join(stateDir, "hme-session.json"),
-		statePath:    filepath.Join(stateDir, "session-state.json"),
-		newClient:    func(config ICloudConfig) (*Client, error) { return NewClient(config) },
+		configPath:        configPath,
+		metadataPath:      filepath.Join(stateDir, "hme-session.json"),
+		statePath:         filepath.Join(stateDir, "session-state.json"),
+		appleAccountPath:  filepath.Join(stateDir, "apple-account-state.json"),
+		createChannelPath: filepath.Join(stateDir, "create-channels.json"),
+		appleAuth:         NewAppleAuthClient(),
+		newClient:         func(config ICloudConfig) (*Client, error) { return NewClient(config) },
 	}
 }
 
@@ -66,7 +77,6 @@ func (manager *SessionManager) Status() SessionStatus {
 
 func (manager *SessionManager) Check(ctx context.Context) SessionStatus {
 	manager.mu.Lock()
-	defer manager.mu.Unlock()
 	status := manager.statusLocked()
 	now := unixNow()
 	config, err := LoadICloudConfig(manager.configPath)
@@ -92,7 +102,275 @@ func (manager *SessionManager) Check(ctx context.Context) SessionStatus {
 		}
 	}
 	_ = storage.WriteJSON(manager.statePath, status.SessionState, 0o600)
+	manager.mu.Unlock()
+	manager.appleOperation.Lock()
+	manager.checkAppleAccountLocked(ctx)
+	manager.appleOperation.Unlock()
+	if !status.SessionValid {
+		if aliases, source, listErr := manager.listAliases(ctx); listErr == nil && source == AppleChannelAccount {
+			status.HME = appleAliasSummary(aliases)
+		}
+	}
+	manager.mu.RLock()
+	status.AppleLogin = manager.appleLoginStatusLocked()
+	manager.mu.RUnlock()
 	return status
+}
+
+func appleAliasSummary(aliases []map[string]any) map[string]any {
+	forward := ""
+	for _, alias := range aliases {
+		forward = firstNonEmpty(forward, stringValue(alias["forwardToEmail"]))
+	}
+	return map[string]any{"aliasCount": len(aliases), "selectedForwardTo": forward}
+}
+
+func (manager *SessionManager) StartAppleLogin(ctx context.Context, input AppleLoginStartInput, expectedDSID string) (AppleLoginStartResult, error) {
+	result, err := manager.appleAuth.Start(ctx, input)
+	if err != nil {
+		return AppleLoginStartResult{}, err
+	}
+	if !result.Needs2FA {
+		if err := ensureAppleLoginAccount(result, expectedDSID); err != nil {
+			return AppleLoginStartResult{}, err
+		}
+		if err := manager.persistAppleLoginResult(result); err != nil {
+			return AppleLoginStartResult{}, err
+		}
+	}
+	return result, nil
+}
+
+func (manager *SessionManager) VerifyAppleLogin(ctx context.Context, pendingID, code, expectedDSID string) (AppleLoginStartResult, error) {
+	result, err := manager.appleAuth.Verify(ctx, pendingID, code)
+	if err != nil {
+		return AppleLoginStartResult{}, err
+	}
+	if err := ensureAppleLoginAccount(result, expectedDSID); err != nil {
+		return AppleLoginStartResult{}, err
+	}
+	if err := manager.persistAppleLoginResult(result); err != nil {
+		return AppleLoginStartResult{}, err
+	}
+	return result, nil
+}
+
+func (manager *SessionManager) persistAppleLoginResult(result AppleLoginStartResult) error {
+	if result.webConfig != nil {
+		manager.mu.Lock()
+		if err := storage.WriteJSON(manager.configPath, *result.webConfig, 0o600); err != nil {
+			manager.mu.Unlock()
+			return err
+		}
+		if err := storage.WriteJSON(manager.metadataPath, result.webConfig.Metadata(), 0o600); err != nil {
+			manager.mu.Unlock()
+			return err
+		}
+		state := SessionState{ExpiresHint: "apple-controlled"}
+		if err := storage.WriteJSON(manager.statePath, state, 0o600); err != nil {
+			manager.mu.Unlock()
+			return err
+		}
+		manager.mu.Unlock()
+		manager.appleOperation.Lock()
+		var account AppleAccountState
+		if storage.ReadJSON(manager.appleAccountPath, &account) == nil && !sameAppleAccount(result.webConfig.AppleID, account.AppleID) {
+			account.LastCheckOK = false
+			account.LastStatusMessage = "登录账号已切换，请为当前账号重新登录 Apple Account"
+			_ = storage.WriteJSON(manager.appleAccountPath, account, 0o600)
+		}
+		manager.appleOperation.Unlock()
+	}
+	if result.accountState != nil {
+		manager.mu.RLock()
+		config, configErr := LoadICloudConfig(manager.configPath)
+		manager.mu.RUnlock()
+		if configErr == nil && !sameAppleAccount(config.AppleID, result.accountState.AppleID) {
+			return appleProtocolError("APPLE_ACCOUNT_MISMATCH", "Apple Account 与当前 iCloud Web 不是同一账号，请先切换 iCloud Web 登录", false)
+		}
+		manager.appleOperation.Lock()
+		defer manager.appleOperation.Unlock()
+		if err := storage.WriteJSON(manager.appleAccountPath, *result.accountState, 0o600); err != nil {
+			return err
+		}
+		manager.recordCreateSuccess(AppleChannelAccount)
+	}
+	return nil
+}
+
+func sameAppleAccount(left, right string) bool {
+	left, right = strings.TrimSpace(left), strings.TrimSpace(right)
+	return left == "" || right == "" || strings.EqualFold(left, right)
+}
+
+func ensureAppleLoginAccount(result AppleLoginStartResult, expectedDSID string) error {
+	expectedDSID = strings.TrimSpace(expectedDSID)
+	if expectedDSID != "" && result.webConfig != nil && result.webConfig.DSID != expectedDSID {
+		return appleProtocolError("QUEUE_ACCOUNT_MISMATCH", "当前批量队列绑定了另一个 iCloud 账号，请完成或取消队列后再切换登录", false)
+	}
+	return nil
+}
+
+// CreateAlias prefers the Apple Account channel when its short-lived state is
+// healthy. It falls back only before the confirmation request could have
+// created an address, preventing duplicate aliases on ambiguous responses.
+func (manager *SessionManager) CreateAlias(ctx context.Context, label, note string) (map[string]any, error) {
+	manager.createOperation.Lock()
+	defer manager.createOperation.Unlock()
+	manager.mu.RLock()
+	webConfig, _ := LoadICloudConfig(manager.configPath)
+	manager.mu.RUnlock()
+	attempted := make([]string, 0, 2)
+	manager.appleOperation.Lock()
+	var account AppleAccountState
+	var accountErr error
+	_, accountCooling := manager.channelCoolingDown(AppleChannelAccount)
+	if !accountCooling && storage.ReadJSON(manager.appleAccountPath, &account) == nil && sameAppleAccount(webConfig.AppleID, account.AppleID) && len(account.Cookies) > 0 {
+		attempted = append(attempted, AppleChannelAccount)
+		alias, updated, err := manager.appleAuth.CreateWithAppleAccount(ctx, account, label, note)
+		_ = storage.WriteJSON(manager.appleAccountPath, updated, 0o600)
+		if err == nil {
+			manager.recordCreateSuccess(AppleChannelAccount)
+			manager.appleOperation.Unlock()
+			decorateCreateResult(alias, AppleChannelAccount, attempted)
+			return alias, nil
+		}
+		manager.recordCreateFailure(AppleChannelAccount, err)
+		accountErr = err
+		var protocol *AppleProtocolError
+		if errors.As(err, &protocol) && protocol.MayHaveCreated {
+			manager.appleOperation.Unlock()
+			return nil, err
+		}
+	}
+	manager.appleOperation.Unlock()
+	_, webCooling := manager.channelCoolingDown(AppleChannelICloudWeb)
+	if webCooling {
+		if accountErr != nil {
+			return nil, accountErr
+		}
+		return nil, appleProtocolError("ICLOUD_WEB_COOLDOWN", "iCloud Web 创建通道仍在限额冷却中，请稍后再试", true)
+	}
+	client, err := manager.Client()
+	if err != nil {
+		if accountErr != nil {
+			return nil, accountErr
+		}
+		return nil, err
+	}
+	attempted = append(attempted, AppleChannelICloudWeb)
+	alias, webErr := client.CreateAlias(ctx, label, note)
+	if webErr != nil {
+		manager.recordCreateFailure(AppleChannelICloudWeb, webErr)
+		return nil, allCreateChannelsFailed(accountErr, webErr)
+	}
+	manager.recordCreateSuccess(AppleChannelICloudWeb)
+	decorateCreateResult(alias, AppleChannelICloudWeb, attempted)
+	return alias, nil
+}
+
+func (manager *SessionManager) ListAliases(ctx context.Context) ([]map[string]any, error) {
+	aliases, _, err := manager.listAliases(ctx)
+	return aliases, err
+}
+
+func (manager *SessionManager) listAliases(ctx context.Context) ([]map[string]any, string, error) {
+	manager.appleOperation.Lock()
+	var account AppleAccountState
+	var accountErr error
+	if storage.ReadJSON(manager.appleAccountPath, &account) == nil && len(account.Cookies) > 0 {
+		aliases, updated, err := manager.appleAuth.ListWithAppleAccount(ctx, account)
+		_ = storage.WriteJSON(manager.appleAccountPath, updated, 0o600)
+		manager.appleOperation.Unlock()
+		if err == nil {
+			return aliases, AppleChannelAccount, nil
+		}
+		if !appleAccountAllowsWebFallback(err) {
+			return nil, AppleChannelAccount, err
+		}
+		accountErr = err
+	} else {
+		manager.appleOperation.Unlock()
+	}
+	client, err := manager.Client()
+	if err != nil {
+		if accountErr != nil {
+			return nil, AppleChannelAccount, accountErr
+		}
+		return nil, AppleChannelICloudWeb, err
+	}
+	aliases, err := client.ListAliases(ctx)
+	return aliases, AppleChannelICloudWeb, err
+}
+
+func (manager *SessionManager) UpdateAlias(ctx context.Context, id, label, note string) (map[string]any, error) {
+	manager.appleOperation.Lock()
+	defer manager.appleOperation.Unlock()
+	var account AppleAccountState
+	if storage.ReadJSON(manager.appleAccountPath, &account) == nil && len(account.Cookies) > 0 {
+		result, updated, err := manager.appleAuth.UpdateWithAppleAccount(ctx, account, id, label, note)
+		_ = storage.WriteJSON(manager.appleAccountPath, updated, 0o600)
+		return result, err
+	}
+	client, err := manager.Client()
+	if err != nil {
+		return nil, err
+	}
+	return client.UpdateAlias(ctx, id, label, note)
+}
+
+func (manager *SessionManager) SetAliasActive(ctx context.Context, id string, active bool) (map[string]any, error) {
+	manager.appleOperation.Lock()
+	defer manager.appleOperation.Unlock()
+	var account AppleAccountState
+	if storage.ReadJSON(manager.appleAccountPath, &account) == nil && len(account.Cookies) > 0 {
+		result, updated, err := manager.appleAuth.SetActiveWithAppleAccount(ctx, account, id, active)
+		_ = storage.WriteJSON(manager.appleAccountPath, updated, 0o600)
+		return result, err
+	}
+	client, err := manager.Client()
+	if err != nil {
+		return nil, err
+	}
+	return client.SetAliasActive(ctx, id, active)
+}
+
+func (manager *SessionManager) DeleteAlias(ctx context.Context, id string) (map[string]any, error) {
+	manager.appleOperation.Lock()
+	defer manager.appleOperation.Unlock()
+	var account AppleAccountState
+	if storage.ReadJSON(manager.appleAccountPath, &account) == nil && len(account.Cookies) > 0 {
+		result, updated, err := manager.appleAuth.DeleteWithAppleAccount(ctx, account, id)
+		_ = storage.WriteJSON(manager.appleAccountPath, updated, 0o600)
+		return result, err
+	}
+	client, err := manager.Client()
+	if err != nil {
+		return nil, err
+	}
+	return client.DeleteAlias(ctx, id)
+}
+
+func appleAccountAllowsWebFallback(err error) bool {
+	var protocol *AppleProtocolError
+	return errors.As(err, &protocol) && (protocol.Code == "APPLE_ACCOUNT_SESSION_MISSING" || protocol.Code == "APPLE_ACCOUNT_EXPIRED")
+}
+
+func decorateCreateResult(alias map[string]any, usedChannel string, attempted []string) {
+	if alias == nil {
+		return
+	}
+	alias["usedChannel"] = usedChannel
+	alias["attemptedChannels"] = append([]string(nil), attempted...)
+	alias["fallbackUsed"] = usedChannel == AppleChannelICloudWeb && len(attempted) > 1
+	alias["nextRetryAt"] = nil
+	if _, ok := alias["detailConfirmed"]; !ok {
+		alias["detailConfirmed"] = usedChannel == AppleChannelICloudWeb
+	}
+}
+
+func (manager *SessionManager) PendingAppleLoginChannel(pendingID string) string {
+	return manager.appleAuth.pendingChannel(pendingID)
 }
 
 func (manager *SessionManager) Import(text, region string) (map[string]any, error) {
@@ -145,7 +423,63 @@ func (manager *SessionManager) statusLocked() SessionStatus {
 		}
 		status.SessionState = stored
 	}
+	status.AppleLogin = manager.appleLoginStatusLocked()
 	return status
+}
+
+func (manager *SessionManager) appleLoginStatusLocked() AppleLoginStatus {
+	result := AppleLoginStatus{CreateChannel: AppleChannelICloudWeb}
+	if config, err := LoadICloudConfig(manager.configPath); err == nil {
+		result.ICloudWeb.Configured = true
+		result.ICloudWeb.AppleID = config.AppleID
+		var state SessionState
+		if storage.ReadJSON(manager.statePath, &state) == nil {
+			result.ICloudWeb.Healthy = state.SessionValid && !state.NeedsReauth
+			result.ICloudWeb.LastCheckedAt = state.LastRefreshAt
+			if state.LastError != nil {
+				result.ICloudWeb.Message = *state.LastError
+			} else if result.ICloudWeb.Healthy {
+				result.ICloudWeb.Message = "iCloud Web 登录态正常"
+			}
+		}
+	}
+	applyCreateRuntime(&result.ICloudWeb, manager.createChannelRuntime(AppleChannelICloudWeb))
+	var account AppleAccountState
+	if storage.ReadJSON(manager.appleAccountPath, &account) == nil && len(account.Cookies) > 0 {
+		var config ICloudConfig
+		_ = storage.ReadJSON(manager.configPath, &config)
+		accountMatches := sameAppleAccount(config.AppleID, account.AppleID)
+		result.AppleAccount.Configured = true
+		result.AppleAccount.Healthy = accountMatches && account.LastCheckOK && (account.ManageExpiresAt.IsZero() || time.Now().Before(account.ManageExpiresAt))
+		result.AppleAccount.AppleID = account.AppleID
+		result.AppleAccount.LastCheckedAt = unixPointer(account.LastCheckedAt)
+		result.AppleAccount.ExpiresAt = unixPointer(account.ManageExpiresAt)
+		result.AppleAccount.Message = account.LastStatusMessage
+	}
+	applyCreateRuntime(&result.AppleAccount, manager.createChannelRuntime(AppleChannelAccount))
+	if result.AppleAccount.Configured && sameAppleAccount(result.ICloudWeb.AppleID, result.AppleAccount.AppleID) && result.AppleAccount.CooldownRemaining == 0 {
+		result.CreateChannel = AppleChannelAccount
+	}
+	return result
+}
+
+func (manager *SessionManager) checkAppleAccountLocked(ctx context.Context) {
+	var account AppleAccountState
+	if storage.ReadJSON(manager.appleAccountPath, &account) != nil || len(account.Cookies) == 0 {
+		return
+	}
+	config, _ := LoadICloudConfig(manager.configPath)
+	if !sameAppleAccount(config.AppleID, account.AppleID) {
+		account.LastCheckedAt = time.Now()
+		account.LastCheckOK = false
+		account.LastStatusMessage = "当前 iCloud Web 已切换账号，请重新登录 Apple Account"
+		_ = storage.WriteJSON(manager.appleAccountPath, account, 0o600)
+		return
+	}
+	if err := manager.appleAuth.refreshAppleAccountState(ctx, &account); err != nil {
+		account.LastCheckedAt, account.LastCheckOK, account.LastStatusMessage = time.Now(), false, safeErrorText(err)
+	}
+	_ = storage.WriteJSON(manager.appleAccountPath, account, 0o600)
 }
 
 func unixNow() float64 { return float64(time.Now().UnixNano()) / float64(time.Second) }

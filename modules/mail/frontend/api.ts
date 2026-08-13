@@ -1,5 +1,5 @@
 import { apiRequest } from '../../../frontend/src/api'
-import type { AliasQueueStatus, AutoRefreshStatus, CreateScheduleStatus, MailAlias, MailboxStatus, MailMessage, SessionStatus, ShareLink } from './types'
+import type { AliasQueueStatus, AppleLoginResult, AutoRefreshStatus, CreateScheduleStatus, MailAlias, MailboxSettings, MailboxSettingsInput, MailboxStatus, MailMessage, SessionStatus, ShareLink } from './types'
 
 const base = '/api/mail/v1'
 
@@ -16,6 +16,9 @@ export const mailAPI = {
   revokeShareLink: (id: string) => apiRequest(`${base}/share-links/${encodeURIComponent(id)}/revoke`, { method: 'POST', body: '{}' }),
   mailboxStatus: () => apiRequest<MailboxStatus>(`${base}/mail/sync/status`),
   mailboxRun: () => apiRequest<MailboxStatus>(`${base}/mail/sync/run`, { method: 'POST', body: '{}' }),
+  mailboxSettings: () => apiRequest<MailboxSettings>(`${base}/mail/settings`),
+  updateMailboxSettings: (payload: MailboxSettingsInput) => apiRequest<MailboxSettings>(`${base}/mail/settings`, { method: 'PUT', body: JSON.stringify(payload) }),
+  testMailboxSettings: (payload: MailboxSettingsInput) => apiRequest<{ connected: boolean }>(`${base}/mail/settings/test`, { method: 'POST', body: JSON.stringify(payload) }),
   mailboxWait: (revision: number, timeout = 25) => apiRequest<MailboxStatus>(`${base}/mail/sync/wait?revision=${revision}&timeout=${timeout}`),
   mailboxMessages: (alias: string, limit = 20) => apiRequest<{ configured: boolean; alias: string; messages: MailMessage[]; sync: MailboxStatus }>(`${base}/mail/messages?alias=${encodeURIComponent(alias)}&limit=${limit}`),
   mailboxRecent: (limit = 200) => apiRequest<{ days: number; messages: MailMessage[]; sync: MailboxStatus }>(`${base}/mail/recent?limit=${limit}`),
@@ -24,7 +27,9 @@ export const mailAPI = {
   hideMailboxMessages: (messages: Array<{ alias: string; uid: number }>, sync: MailboxStatus) => apiRequest(`${base}/mail/messages/hide-batch`, { method: 'POST', body: JSON.stringify({ messages, uidValidity: sync.uidValidity, mailboxGeneration: sync.mailboxGeneration }) }),
   session: () => apiRequest<SessionStatus>(`${base}/session/status`),
   refreshSession: () => apiRequest<SessionStatus>(`${base}/session/refresh`, { method: 'POST', body: '{}' }),
-  importSession: (curlText: string, region: 'international' | 'china') => apiRequest<{ imported: boolean; icloudRegion: string; host: string }>(`${base}/session/import`, { method: 'POST', body: JSON.stringify({ curl_text: curlText, icloud_region: region }) }),
+  importSession: (curlText: string) => apiRequest<{ imported: boolean; icloudRegion: string; host: string }>(`${base}/session/import`, { method: 'POST', body: JSON.stringify({ curl_text: curlText }) }),
+  startAppleLogin: (payload: { appleId: string; password: string; channel: 'icloud_web' | 'apple_account'; twoFactorMethod: 'trusted_device' | 'phone' }) => apiRequest<AppleLoginResult>(`${base}/session/apple-login/start`, { method: 'POST', body: JSON.stringify(payload) }),
+  verifyAppleLogin: (pendingId: string, code: string) => apiRequest<AppleLoginResult>(`${base}/session/apple-login/verify`, { method: 'POST', body: JSON.stringify({ pendingId, code }) }),
   autoRefresh: () => apiRequest<AutoRefreshStatus>(`${base}/auto-refresh`),
   updateAutoRefresh: (payload: { enabled?: boolean; intervalSeconds?: number }) => apiRequest<AutoRefreshStatus>(`${base}/auto-refresh`, { method: 'POST', body: JSON.stringify(payload) }),
   runAutoRefresh: () => apiRequest<{ autoRefresh: AutoRefreshStatus; session: SessionStatus }>(`${base}/auto-refresh/run`, { method: 'POST', body: '{}' }),

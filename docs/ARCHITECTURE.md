@@ -4,8 +4,8 @@
 
 项目统一采用 Go + Gin + Ent、Vue 3 + TypeScript + Vite、PostgreSQL 15+ + Redis 7+。
 Gin 用于 HTTP 网关和中间件，Ent 用于 PostgreSQL 模型管理，Redis 用于缓存、限流、
-分布式锁和短期任务状态。当前重构版本尚未接入 Gin、Ent、PostgreSQL 或 Redis，现有
-HTTP 服务和 JSON 文件存储继续用于兼容迁移；这些组件属于明确的后续接入标准。
+分布式锁和短期任务状态。当前已接入 Ent、PostgreSQL 和 Redis；HTTP 服务仍使用标准库
+兼容现有路由，Gin 尚未切换。
 
 生产构建使用 `-tags embed` 将 Vite 产物嵌入 Go 二进制。详细约束见
 [技术栈规范](TECH_STACK.md)。
@@ -66,9 +66,14 @@ Vue 单文件组件的模板和 TypeScript 逻辑放在对应模块目录内。�
 
 ## 持久化数据
 
-当前实现使用文件持久化，以保证从 `hme-manager` 迁移时无需额外基础设施。PostgreSQL
-15+ 和 Redis 7+ 暂作为规划中的标准数据层：结构化业务数据最终进入 PostgreSQL，
-短期缓存和任务协调进入 Redis；Redis 不得作为唯一持久化来源。
+当前邮件缓存支持三种数据路径：`json` 用于无数据库本地开发，`dual` 以 JSON 为主读并
+同步写 PostgreSQL，`postgres` 以 PostgreSQL 为主数据源。PostgreSQL 保存邮件正文、
+验证码索引、隐藏记录与 IMAP 同步状态；Redis 当前用于多实例 IMAP 同步锁，故障时回退
+本进程锁。Redis 不得作为唯一持久化来源。
+
+会持续快速增长的数据按优先级为：邮件正文和安全 HTML、分享链接与分享会话、创建任务
+执行历史、审计日志。第一类已经迁移；其余类型应直接建 PostgreSQL 模型，不能继续设计
+为无限增长的整份 JSON 文件。
 
 ```text
 data/

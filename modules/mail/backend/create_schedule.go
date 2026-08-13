@@ -3,6 +3,7 @@ package mail
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -40,6 +41,9 @@ type CreateScheduleConfig struct {
 	LastBatchRequested     int      `json:"lastBatchRequested"`
 	LastBatchSuccess       int      `json:"lastBatchSuccess"`
 	LastBatchStoppedReason *string  `json:"lastBatchStoppedReason"`
+	LastUsedChannel        string   `json:"lastUsedChannel,omitempty"`
+	LastFallbackUsed       bool     `json:"lastFallbackUsed,omitempty"`
+	LastAttemptedChannels  []string `json:"lastAttemptedChannels,omitempty"`
 	WorkerRunning          bool     `json:"workerRunning"`
 	Running                bool     `json:"running"`
 	CurrentIndex           int      `json:"currentIndex"`
@@ -276,11 +280,6 @@ func (service *CreateScheduler) runBatch(ctx context.Context, manual bool) {
 	_ = storage.WriteJSON(service.path, persistentCreateConfig(config), 0o600)
 	service.mu.Unlock()
 
-	client, err := service.session.Client()
-	if err != nil {
-		service.finishBatch(err, "Session 未导入，请先导入")
-		return
-	}
 	for index := 1; index <= config.BatchSize; index++ {
 		if err := ctx.Err(); err != nil {
 			service.finishBatch(err, "任务已停止")
@@ -288,7 +287,7 @@ func (service *CreateScheduler) runBatch(ctx context.Context, manual bool) {
 		}
 		service.setProgress(index, config.BatchSize, config.LastBatchSuccess)
 		service.createGate.Lock()
-		_, err = client.CreateAlias(ctx, config.Label, config.Note)
+		created, err := service.session.CreateAlias(ctx, config.Label, config.Note)
 		service.createGate.Unlock()
 		if err != nil {
 			reason := "创建失败"
@@ -300,6 +299,7 @@ func (service *CreateScheduler) runBatch(ctx context.Context, manual bool) {
 			service.finishBatch(err, reason)
 			return
 		}
+		service.setLastCreateRoute(created)
 		config.LastBatchSuccess++
 		service.setProgress(index, config.BatchSize, config.LastBatchSuccess)
 		if index < config.BatchSize {
@@ -314,6 +314,19 @@ func (service *CreateScheduler) runBatch(ctx context.Context, manual bool) {
 		}
 	}
 	service.finishBatch(nil, "本轮创建完成")
+}
+
+func (service *CreateScheduler) setLastCreateRoute(created map[string]any) {
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	config := service.loadLocked()
+	config.LastUsedChannel = strings.TrimSpace(fmt.Sprint(created["usedChannel"]))
+	config.LastFallbackUsed, _ = created["fallbackUsed"].(bool)
+	config.LastAttemptedChannels = nil
+	if attempted, ok := created["attemptedChannels"].([]string); ok {
+		config.LastAttemptedChannels = append([]string(nil), attempted...)
+	}
+	_ = storage.WriteJSON(service.path, persistentCreateConfig(config), 0o600)
 }
 
 func (service *CreateScheduler) setProgress(index, total, success int) {

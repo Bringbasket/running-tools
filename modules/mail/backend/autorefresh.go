@@ -93,7 +93,7 @@ func (service *AutoRefresh) Run(ctx context.Context) (map[string]any, error) {
 	config := service.loadLocked()
 	now := unixNow()
 	config.LastRunAt = &now
-	if status.NeedsReauth {
+	if status.NeedsReauth && !status.AppleLogin.AppleAccount.Healthy {
 		reason := "session requires re-import"
 		if status.LastError != nil {
 			reason = *status.LastError

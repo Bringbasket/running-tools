@@ -5,17 +5,18 @@
 - Go 1.24 或更高版本
 - Node.js 22 或更高版本
 - npm 11 或更高版本
-- PostgreSQL 15 或更高版本（规划接入，当前本地运行不需要）
-- Redis 7 或更高版本（规划接入，当前本地运行不需要）
+- PostgreSQL 15 或更高版本（`dual` 和 `postgres` 模式需要）
+- Redis 7 或更高版本（生产多实例同步锁需要，单机不可用时允许降级）
 
-后端的目标技术栈为 Go + Gin + Ent。当前代码仍以标准库 HTTP 服务兼容旧接口，Gin
-网关和 Ent 数据模型会在数据库接入阶段启用。前端使用 Vue 3、TypeScript、Vite、Vue
+后端的目标技术栈为 Go + Gin + Ent。当前代码仍以标准库 HTTP 服务兼容旧接口，Ent
+数据模型已用于邮件持久化，Gin 网关尚未切换。前端使用 Vue 3、TypeScript、Vite、Vue
 Router 和 Lucide 图标。
 
 所有页面的新建与重构必须遵守 [界面设计规范](UI_GUIDELINES.md)。页面评审先检查信息架构、操作路径和状态完整性，再检查视觉细节；不能仅通过更换配色或增加卡片视为完成优化。
 
-数据库接入后的 Go 配套组件包括 pgx、go-redis、结构化日志和 testcontainers-go；
-引入时必须同步更新 `go.mod`、Compose、环境变量、迁移和集成测试，不能只修改文档。
+数据库组件使用 pgx 和 go-redis，版本化 SQL 位于 `internal/platform/persistence/migrations`，
+Ent schema 位于 `internal/platform/persistence/ent/schema`。修改 schema 后必须重新生成 Ent
+代码并增加迁移文件，不能直接修改生成代码。
 
 ## 常用命令
 

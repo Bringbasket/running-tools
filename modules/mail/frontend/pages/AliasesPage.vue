@@ -193,6 +193,10 @@ function formatRemaining(value: number | null | undefined) {
   return `${Math.floor(value / 60)} 分 ${value % 60} 秒`
 }
 
+function createChannelLabel(value: string | null | undefined) {
+  return value === 'apple_account' ? 'Apple Account' : value === 'icloud_web' ? 'iCloud Web' : '尚无记录'
+}
+
 async function create() {
   if (!label.value.trim()) return
   creating.value = true; error.value = ''
@@ -317,7 +321,7 @@ onBeforeUnmount(() => {
           <label class="field schedule-note"><span>备注 <small>可留空</small></span><input v-model="scheduleNote" maxlength="500" /></label>
           <div class="schedule-save"><span v-if="schedule?.lastBatchStoppedReason">最近状态：{{ schedule.lastBatchStoppedReason }}<small v-if="schedule.lastRunAt"> · {{ formatScheduleTime(schedule.lastRunAt) }}</small></span><button class="button primary" :disabled="scheduleSaving || schedule?.running" @click="saveSchedule(schedule?.enabled)"><LoaderCircle v-if="scheduleSaving" :size="15" class="spin" />保存参数</button><button class="button secondary" :disabled="scheduleSaving || schedule?.enabled" @click="saveSchedule(true)"><Play :size="15" />保存并开启</button></div>
         </div>
-        <div class="schedule-meta"><span>本轮成功 {{ schedule?.running ? schedule.currentSuccess : schedule?.lastBatchSuccess || 0 }} / {{ schedule?.running ? schedule.currentTotal : schedule?.lastBatchRequested || batchSize }} 个</span><span v-if="schedule?.lastError" class="schedule-error">{{ schedule.lastError }}</span></div>
+        <div class="schedule-meta"><span>本轮成功 {{ schedule?.running ? schedule.currentSuccess : schedule?.lastBatchSuccess || 0 }} / {{ schedule?.running ? schedule.currentTotal : schedule?.lastBatchRequested || batchSize }} 个</span><span v-if="schedule?.lastUsedChannel">最近通道 {{ createChannelLabel(schedule.lastUsedChannel) }}{{ schedule.lastFallbackUsed ? ' · 已自动兜底' : '' }}</span><span v-if="schedule?.lastError" class="schedule-error">{{ schedule.lastError }}</span></div>
       </div>
 
       <div v-else class="task-pane">
@@ -367,7 +371,6 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.mail-aliases { max-width: 1480px; }
 .alias-overview { display: flex; min-height: 54px; align-items: center; gap: 0; margin-bottom: 16px; padding: 0 16px; color: var(--muted); background: var(--surface); border: 1px solid var(--border); border-radius: 7px; }
 .alias-overview > div { display: flex; min-width: 155px; align-items: center; gap: 8px; padding-right: 24px; font-size: 12px; }
 .alias-overview > div + div { padding-left: 24px; border-left: 1px solid var(--border-soft); }

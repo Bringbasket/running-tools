@@ -168,12 +168,11 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.pricing-page { max-width: 1440px; }
 .pricing-heading { align-items: center; }
 .pricing-actions { display: flex; align-items: center; gap: 10px; }
 .local-status { display: inline-flex; align-items: center; gap: 7px; padding: 0 10px; min-height: 32px; border: 1px solid var(--border-soft); border-radius: 7px; color: var(--muted); font-size: 11px; white-space: nowrap; }
 .local-status span { width: 7px; height: 7px; border-radius: 50%; background: #10b981; box-shadow: 0 0 0 3px rgba(16, 185, 129, .12); }
-.pricing-ticker { position: relative; display: flex; align-items: center; min-height: 36px; margin: -28px -28px 24px; padding: 0; color: var(--muted); background: color-mix(in srgb, var(--surface) 90%, var(--app-bg)); border-bottom: 1px solid var(--border-soft); font: 500 11px/1 ui-monospace, SFMono-Regular, Consolas, monospace; overflow: hidden; white-space: nowrap; }
+.pricing-ticker { position: relative; display: flex; align-items: center; width: 100%; min-height: 36px; margin: 0 0 24px; padding: 0; color: var(--muted); background: color-mix(in srgb, var(--surface) 90%, var(--app-bg)); border: 1px solid var(--border-soft); border-radius: 7px; font: 500 11px/1 ui-monospace, SFMono-Regular, Consolas, monospace; overflow: hidden; white-space: nowrap; }
 .pricing-ticker::before, .pricing-ticker::after { position: absolute; top: 0; bottom: 0; z-index: 1; width: 34px; content: ''; pointer-events: none; }
 .pricing-ticker::before { left: 0; background: linear-gradient(90deg, color-mix(in srgb, var(--surface) 90%, var(--app-bg)), transparent); }
 .pricing-ticker::after { right: 0; background: linear-gradient(270deg, color-mix(in srgb, var(--surface) 90%, var(--app-bg)), transparent); }
@@ -259,6 +258,6 @@ onBeforeUnmount(() => {
 .tool-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 20px 2px 4px; color: var(--muted); font-size: 10px; }
 .tool-footer span { display: inline-flex; align-items: center; gap: 5px; }
 @media (max-width: 1023px) { .pricing-grid, .audit-grid { grid-template-columns: minmax(0, 1fr); } }
-@media (max-width: 760px) { .pricing-ticker { margin: -20px -14px 18px; } }
+@media (max-width: 760px) { .pricing-ticker { margin-bottom: 18px; } }
 @media (max-width: 620px) { .pricing-heading { align-items: flex-start; } .pricing-actions { width: 100%; justify-content: space-between; } .ticker-item { padding: 0 18px; } .ticker-item::before { margin-right: 8px; } .tool-panel { padding: 16px; } .tool-form-grid { grid-template-columns: minmax(0, 1fr); } .tool-field.wide { grid-column: auto; } .result-grid, .simulation-results { grid-template-columns: minmax(0, 1fr); } .quota-results .primary-result { grid-column: auto; } .tool-footer { align-items: flex-start; flex-direction: column; } }
 </style>

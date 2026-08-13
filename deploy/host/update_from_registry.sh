@@ -112,7 +112,7 @@ if [ "$current_revision" = "$target_revision" ] && [ -n "$container" ] && [ "$(d
 fi
 
 write_status restarting "正在重启服务"
-compose up -d --no-build --force-recreate --remove-orphans
+compose up -d --no-build --force-recreate --no-deps app
 new_container="$(compose ps -q app)"
 for _ in $(seq 1 30); do
   [ "$(docker inspect --format '{{.State.Health.Status}}' "$new_container" 2>/dev/null || true)" = healthy ] && {
@@ -125,7 +125,7 @@ done
 
 if [ -n "$old_image" ] && docker image inspect "$old_image" >/dev/null 2>&1; then
   docker tag "$old_image" "$image"
-  compose up -d --no-build --force-recreate app || true
+  compose up -d --no-build --force-recreate --no-deps app || true
 fi
 echo "new container did not become healthy" >&2
 exit 1

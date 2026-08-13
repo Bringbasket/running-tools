@@ -45,6 +45,9 @@ func (api *routeAPI) register(mux *http.ServeMux, auth httpx.Middleware, base st
 	protect(http.MethodPost, "/share-links/{id}/revoke", api.revokeShareLink)
 	protect(http.MethodGet, "/mail/sync/status", api.mailboxStatus)
 	protect(http.MethodPost, "/mail/sync/run", api.mailboxRun)
+	protect(http.MethodGet, "/mail/settings", api.mailboxSettings)
+	protect(http.MethodPut, "/mail/settings", api.mailboxSettingsUpdate)
+	protect(http.MethodPost, "/mail/settings/test", api.mailboxSettingsTest)
 	protect(http.MethodGet, "/mail/messages", api.mailMessages)
 	protect(http.MethodGet, "/mail/recent", api.mailRecent)
 	protect(http.MethodGet, "/mail/messages/{uid}", api.mailMessage)
@@ -59,6 +62,8 @@ func (api *routeAPI) register(mux *http.ServeMux, auth httpx.Middleware, base st
 	protect(http.MethodGet, "/session/status", api.sessionStatus)
 	protect(http.MethodPost, "/session/refresh", api.sessionRefresh)
 	protect(http.MethodPost, "/session/import", api.sessionImport)
+	protect(http.MethodPost, "/session/apple-login/start", api.appleLoginStart)
+	protect(http.MethodPost, "/session/apple-login/verify", api.appleLoginVerify)
 	protect(http.MethodGet, "/auto-refresh", api.autoRefreshStatus)
 	protect(http.MethodPost, "/auto-refresh", api.autoRefreshUpdate)
 	protect(http.MethodPost, "/auto-refresh/run", api.autoRefreshRun)
@@ -82,13 +87,46 @@ func (api *routeAPI) register(mux *http.ServeMux, auth httpx.Middleware, base st
 func (api *routeAPI) mailboxStatus(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteData(w, r, http.StatusOK, api.mailbox.Status())
 }
-func (api *routeAPI) mailboxRun(w http.ResponseWriter, r *http.Request) {
-	client, err := api.session.Client()
-	if err != nil {
-		api.writeMailError(w, r, err)
+func (api *routeAPI) mailboxSettings(w http.ResponseWriter, r *http.Request) {
+	httpx.WriteData(w, r, http.StatusOK, api.mailbox.Settings())
+}
+func (api *routeAPI) mailboxSettingsUpdate(w http.ResponseWriter, r *http.Request) {
+	var payload MailboxSettingsInput
+	if err := httpx.DecodeJSON(w, r, &payload, 64<<10); err != nil {
+		httpx.WriteError(w, r, http.StatusBadRequest, "BAD_REQUEST", err.Error())
 		return
 	}
-	aliases, err := client.ListAliases(r.Context())
+	settings, err := api.mailbox.UpdateSettings(payload)
+	if err != nil {
+		if errors.Is(err, ErrInvalidMailboxSettings) {
+			httpx.WriteError(w, r, http.StatusBadRequest, "BAD_REQUEST", err.Error())
+			return
+		}
+		httpx.WriteError(w, r, http.StatusInternalServerError, "STORAGE_ERROR", err.Error())
+		return
+	}
+	httpx.WriteData(w, r, http.StatusOK, settings)
+}
+func (api *routeAPI) mailboxSettingsTest(w http.ResponseWriter, r *http.Request) {
+	var payload MailboxSettingsInput
+	if err := httpx.DecodeJSON(w, r, &payload, 64<<10); err != nil {
+		httpx.WriteError(w, r, http.StatusBadRequest, "BAD_REQUEST", err.Error())
+		return
+	}
+	if err := api.mailbox.TestSettings(payload); err != nil {
+		status := http.StatusServiceUnavailable
+		code := "MAILBOX_UNAVAILABLE"
+		if errors.Is(err, ErrInvalidMailboxSettings) {
+			status = http.StatusBadRequest
+			code = "BAD_REQUEST"
+		}
+		httpx.WriteError(w, r, status, code, err.Error())
+		return
+	}
+	httpx.WriteData(w, r, http.StatusOK, map[string]bool{"connected": true})
+}
+func (api *routeAPI) mailboxRun(w http.ResponseWriter, r *http.Request) {
+	aliases, err := api.session.ListAliases(r.Context())
 	if err != nil {
 		api.writeMailError(w, r, err)
 		return
@@ -353,12 +391,7 @@ func (api *routeAPI) shareWait(w http.ResponseWriter, r *http.Request) {
 
 func (api *routeAPI) shareLinks(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimSpace(r.PathValue("id"))
-	client, err := api.session.Client()
-	if err != nil {
-		api.writeMailError(w, r, err)
-		return
-	}
-	aliases, err := client.ListAliases(r.Context())
+	aliases, err := api.session.ListAliases(r.Context())
 	if err != nil {
 		api.writeMailError(w, r, err)
 		return
@@ -373,12 +406,7 @@ func (api *routeAPI) shareLinks(w http.ResponseWriter, r *http.Request) {
 }
 func (api *routeAPI) createShareLink(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimSpace(r.PathValue("id"))
-	client, err := api.session.Client()
-	if err != nil {
-		api.writeMailError(w, r, err)
-		return
-	}
-	aliases, err := client.ListAliases(r.Context())
+	aliases, err := api.session.ListAliases(r.Context())
 	if err != nil {
 		api.writeMailError(w, r, err)
 		return
@@ -442,12 +470,7 @@ func (api *routeAPI) updateAlias(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, http.StatusBadRequest, "BAD_REQUEST", "label is required")
 		return
 	}
-	client, err := api.session.Client()
-	if err != nil {
-		api.writeMailError(w, r, err)
-		return
-	}
-	result, err := client.UpdateAlias(r.Context(), id, payload.Label, payload.Note)
+	result, err := api.session.UpdateAlias(r.Context(), id, payload.Label, payload.Note)
 	if err != nil {
 		api.writeMailError(w, r, err)
 		return
@@ -527,16 +550,12 @@ func (api *routeAPI) writeQueueError(w http.ResponseWriter, r *http.Request, err
 }
 
 func (api *routeAPI) listAliases(w http.ResponseWriter, r *http.Request) {
-	client, err := api.session.Client()
+	aliases, source, err := api.session.listAliases(r.Context())
 	if err != nil {
 		api.writeMailError(w, r, err)
 		return
 	}
-	aliases, err := client.ListAliases(r.Context())
-	if err != nil {
-		api.writeMailError(w, r, err)
-		return
-	}
+	w.Header().Set("X-Running-Mail-Source", source)
 	httpx.WriteData(w, r, http.StatusOK, aliases)
 }
 
@@ -558,13 +577,8 @@ func (api *routeAPI) createAlias(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, http.StatusBadRequest, "BAD_REQUEST", "label is required")
 		return
 	}
-	client, err := api.session.Client()
-	if err != nil {
-		api.writeMailError(w, r, err)
-		return
-	}
 	api.createGate.Lock()
-	alias, err := client.CreateAlias(r.Context(), payload.Label, payload.Note)
+	alias, err := api.session.CreateAlias(r.Context(), payload.Label, payload.Note)
 	api.createGate.Unlock()
 	if err != nil {
 		api.writeMailError(w, r, err)
@@ -596,11 +610,7 @@ func (api *routeAPI) exportAliasesCSV(w http.ResponseWriter, r *http.Request) {
 }
 
 func (api *routeAPI) aliasesCSV(r *http.Request) (string, error) {
-	client, err := api.session.Client()
-	if err != nil {
-		return "", err
-	}
-	aliases, err := client.ListAliases(r.Context())
+	aliases, err := api.session.ListAliases(r.Context())
 	if err != nil {
 		return "", err
 	}
@@ -614,16 +624,11 @@ func (api *routeAPI) aliasAction(active, deleteAlias bool) http.HandlerFunc {
 			httpx.WriteError(w, r, http.StatusBadRequest, "BAD_REQUEST", "anonymous id is required")
 			return
 		}
-		client, err := api.session.Client()
-		if err != nil {
-			api.writeMailError(w, r, err)
-			return
-		}
 		// Capture the address before a delete; iCloud no longer returns the
 		// deleted record in a subsequent list response.
 		var aliasAddress string
 		if deleteAlias || !active {
-			if aliases, listErr := client.ListAliases(r.Context()); listErr == nil {
+			if aliases, listErr := api.session.ListAliases(r.Context()); listErr == nil {
 				for _, alias := range aliases {
 					if fmt.Sprint(alias["anonymousId"]) == id {
 						aliasAddress = fmt.Sprint(alias["hme"])
@@ -634,9 +639,9 @@ func (api *routeAPI) aliasAction(active, deleteAlias bool) http.HandlerFunc {
 		}
 		var result map[string]any
 		if deleteAlias {
-			result, err = client.DeleteAlias(r.Context(), id)
+			result, err = api.session.DeleteAlias(r.Context(), id)
 		} else {
-			result, err = client.SetAliasActive(r.Context(), id, active)
+			result, err = api.session.SetAliasActive(r.Context(), id, active)
 		}
 		if err != nil {
 			api.writeMailError(w, r, err)
@@ -666,7 +671,7 @@ func (api *routeAPI) sessionImport(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, http.StatusBadRequest, "BAD_REQUEST", err.Error())
 		return
 	}
-	if api.queue.Active() {
+	if api.queue != nil && api.queue.Active() {
 		incoming, parseErr := ParseImportText(payload.CurlText, payload.Region)
 		if parseErr != nil {
 			httpx.WriteError(w, r, http.StatusBadRequest, "BAD_REQUEST", parseErr.Error())
@@ -683,6 +688,58 @@ func (api *routeAPI) sessionImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteData(w, r, http.StatusOK, result)
+}
+
+func (api *routeAPI) appleLoginStart(w http.ResponseWriter, r *http.Request) {
+	var payload AppleLoginStartInput
+	if err := httpx.DecodeJSON(w, r, &payload, 64<<10); err != nil {
+		httpx.WriteError(w, r, http.StatusBadRequest, "BAD_REQUEST", err.Error())
+		return
+	}
+	expectedDSID := ""
+	if api.queue.Active() {
+		expectedDSID = api.queue.AccountDSID()
+	}
+	result, err := api.session.StartAppleLogin(r.Context(), payload, expectedDSID)
+	if err != nil {
+		api.writeAppleLoginError(w, r, err)
+		return
+	}
+	httpx.WriteData(w, r, http.StatusOK, result)
+}
+
+func (api *routeAPI) appleLoginVerify(w http.ResponseWriter, r *http.Request) {
+	payload := struct {
+		PendingID string `json:"pendingId"`
+		Code      string `json:"code"`
+	}{}
+	if err := httpx.DecodeJSON(w, r, &payload, 64<<10); err != nil {
+		httpx.WriteError(w, r, http.StatusBadRequest, "BAD_REQUEST", err.Error())
+		return
+	}
+	expectedDSID := ""
+	if api.queue != nil && api.queue.Active() && api.session.PendingAppleLoginChannel(payload.PendingID) == AppleChannelICloudWeb {
+		expectedDSID = api.queue.AccountDSID()
+	}
+	result, err := api.session.VerifyAppleLogin(r.Context(), payload.PendingID, payload.Code, expectedDSID)
+	if err != nil {
+		api.writeAppleLoginError(w, r, err)
+		return
+	}
+	httpx.WriteData(w, r, http.StatusOK, result)
+}
+
+func (api *routeAPI) writeAppleLoginError(w http.ResponseWriter, r *http.Request, err error) {
+	var protocol *AppleProtocolError
+	if errors.As(err, &protocol) {
+		status := http.StatusBadGateway
+		if !protocol.Retryable {
+			status = http.StatusBadRequest
+		}
+		httpx.WriteError(w, r, status, protocol.Code, protocol.Message)
+		return
+	}
+	httpx.WriteError(w, r, http.StatusBadGateway, "APPLE_LOGIN_FAILED", safeErrorText(err))
 }
 
 func (api *routeAPI) autoRefreshStatus(w http.ResponseWriter, r *http.Request) {
@@ -772,6 +829,11 @@ func (api *routeAPI) writeMailError(w http.ResponseWriter, r *http.Request, err 
 	}
 	var upstream *UpstreamError
 	var apple *AppleError
+	var protocol *AppleProtocolError
+	if errors.As(err, &protocol) {
+		httpx.WriteError(w, r, http.StatusBadGateway, protocol.Code, protocol.Message)
+		return
+	}
 	if errors.As(err, &upstream) || errors.As(err, &apple) {
 		httpx.WriteError(w, r, http.StatusBadGateway, "ICLOUD_ERROR", err.Error())
 		return

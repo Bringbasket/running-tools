@@ -5,10 +5,21 @@ Go 重构版本采用分阶段迁移方式。在 Go 容器通过 API 和数据�
 
 ## 数据层迁移规划
 
-当前迁移只负责将旧 JSON 文件复制到模块化 `data/` 目录。PostgreSQL 15+（Ent 模型）
-和 Redis 7+ 尚未启用，不会在本次文件迁移中自动创建数据库、修改其他 Docker 容器或
-删除旧数据。后续接入时应单独提供 Ent schema、可回滚迁移、双写校验和 Redis TTL/故障
-降级方案，并在完成校验后再切换主数据源。
+当前迁移分为文件目录迁移和数据库迁移。脚本先把旧 JSON 复制到模块化 `data/` 目录；
+应用在 `dual` 或 `postgres` 模式首次启动时，再将 `mailbox-cache.json` 导入 PostgreSQL。
+导入不会删除或改名旧 JSON，也不会操作其他 Docker 项目。
+
+## 邮件数据库迁移
+
+1. 备份 `data/` 和 PostgreSQL 命名卷。
+2. 在 `.env` 设置 `RUNNING_STORAGE_MODE=dual`，启动当前项目。
+3. 检查 `/health` 中 `postgres=ok`、`redis=ok`、`storageMode=dual`。
+4. 对比网页邮件数量以及 `mailbox_messages`、`mailbox_hidden_messages` 的行数。
+5. 至少观察一个完整 IMAP 同步周期，确认 JSON 与数据库都正常更新。
+6. 将模式改为 `postgres` 并只重建 `app` 服务；继续保留 JSON 作为回退副本。
+
+如果 PostgreSQL 模式异常，可先切回 `json`；`dual` 模式下 JSON 是读取主源。不要在未
+确认备份前删除命名卷或 `mailbox-cache.json`。
 
 ## 数据对应关系
 

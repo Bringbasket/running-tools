@@ -6,6 +6,9 @@ const mocks = vi.hoisted(() => ({
   mailboxRecent: vi.fn(),
   mailboxWait: vi.fn(),
   mailboxMessage: vi.fn(),
+  mailboxSettings: vi.fn(),
+  updateMailboxSettings: vi.fn(),
+  testMailboxSettings: vi.fn(),
 }))
 
 vi.mock('../api', () => ({
@@ -13,6 +16,9 @@ vi.mock('../api', () => ({
     mailboxRecent: mocks.mailboxRecent,
     mailboxWait: mocks.mailboxWait,
     mailboxMessage: mocks.mailboxMessage,
+    mailboxSettings: mocks.mailboxSettings,
+    updateMailboxSettings: mocks.updateMailboxSettings,
+    testMailboxSettings: mocks.testMailboxSettings,
   },
 }))
 
@@ -68,6 +74,50 @@ describe('收件箱页面', () => {
     htmlMode?.click()
     await flushPromises()
     expect(document.body.querySelector('iframe.mail-html')?.getAttribute('sandbox')).toContain('allow-popups')
+
+    wrapper.unmount()
+  })
+
+  it('从前端保存 IMAP 设置且不回填已有密码', async () => {
+    mocks.mailboxRecent.mockResolvedValue({
+      days: 3,
+      messages: [],
+      sync: { configured: false, enabled: false, workerRunning: false, syncMode: 'disabled', revision: 0, lastSyncAt: null },
+    })
+    mocks.mailboxWait.mockImplementation(() => new Promise(() => {}))
+    mocks.mailboxSettings.mockResolvedValue({
+      username: 'owner@example.com', host: 'imap.example.com', port: 993, mailbox: 'INBOX',
+      enabled: true, pollSeconds: 120, lookbackDays: 90, cacheMax: 5000,
+      passwordConfigured: true, source: 'saved',
+    })
+    mocks.updateMailboxSettings.mockResolvedValue({
+      username: 'owner@example.com', host: 'imap.example.com', port: 993, mailbox: 'INBOX',
+      enabled: true, pollSeconds: 120, lookbackDays: 90, cacheMax: 5000,
+      passwordConfigured: true, source: 'saved',
+    })
+
+    const wrapper = mount(MailboxPage, { attachTo: document.body })
+    await flushPromises()
+    const settingsButton = wrapper.findAll('button').find((button) => button.text().includes('IMAP 设置'))
+    expect(settingsButton).toBeTruthy()
+    await settingsButton!.trigger('click')
+    await flushPromises()
+
+    const dialog = document.body.querySelector<HTMLElement>('.mailbox-settings-dialog')
+    expect(dialog).toBeTruthy()
+    const password = dialog!.querySelector<HTMLInputElement>('input[type="password"]')!
+    expect(password.value).toBe('')
+    expect(password.placeholder).toContain('留空表示不修改')
+
+    dialog!.querySelector<HTMLFormElement>('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    await flushPromises()
+    expect(mocks.updateMailboxSettings).toHaveBeenCalledWith(expect.objectContaining({
+      username: 'owner@example.com',
+      password: '',
+      enabled: true,
+    }))
+    expect(document.body.querySelector('.mailbox-settings-dialog')).toBeNull()
+    expect(wrapper.text()).toContain('IMAP 设置已保存')
 
     wrapper.unmount()
   })

@@ -9,9 +9,11 @@ Running Tools 是一个模块化的自托管运维控制台。Go 服务负责身
 ## 规范技术栈
 
 后端规范为 **Go + Gin + Ent**，前端规范为 **Vue 3 + TypeScript + Vite**，数据层
-规范为 **PostgreSQL 15+ + Redis 7+**。其中 Gin、Ent、PostgreSQL 和 Redis 是统一的
-后续接入标准，当前版本仍使用 Go HTTP 服务和 `data/` JSON 文件运行，尚未要求部署
-数据库或 Redis。生产构建支持 `-tags embed`，将 Vue 前端资源嵌入单个 Go 二进制。
+规范为 **PostgreSQL 15+ + Redis 7+**。当前已使用 Ent + PostgreSQL 持久化邮件正文、
+验证码索引、隐藏记录和 IMAP 同步状态，并使用 Redis 协调多实例 IMAP 同步；Session
+密钥和 IMAP 密码仍以权限为 `0600` 的文件保存。HTTP 网关目前仍是 Go 标准库，Gin
+继续作为后续统一网关规范。生产构建支持 `-tags embed`，将 Vue 前端资源嵌入单个 Go
+二进制。
 
 完整组件职责、接入状态和迁移顺序见 [技术栈规范](docs/TECH_STACK.md)。
 
@@ -47,6 +49,7 @@ running-tools/
 - Session 持久化、状态检查和服务端自动刷新；
 - 邮箱创建计划由前端配置、Go 后台 Worker 持久执行；
 - 从私有 GHCR 镜像更新、健康检查、失败回滚和自动重启；
+- 邮件缓存可按 `json`、`dual`、`postgres` 三种模式迁移到 PostgreSQL；
 - 桌面端可收起侧栏、移动端抽屉菜单和深浅色主题。
 - 独立工具箱菜单，以及纯前端的保本测算（保本倍率、额度反推和利润试算）。
 
@@ -55,7 +58,8 @@ running-tools/
 
 ## 本地开发
 
-环境要求：Go 1.24 或更高版本、Node.js 22 或更高版本、npm 11 或更高版本。
+环境要求：Go 1.24 或更高版本、Node.js 22 或更高版本、npm 11 或更高版本。直接本地
+运行默认采用 `json` 存储；完整生产环境通过 Compose 启动 PostgreSQL 16 和 Redis 7。
 
 ```bash
 cp .env.example .env

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 var ErrSessionMissing = errors.New("尚未导入 iCloud session")
@@ -24,6 +25,20 @@ type AppleError struct {
 
 func (err *AppleError) Error() string {
 	return "iCloud returned success=false: " + safeValue(err.Payload)
+}
+
+func (err *AppleError) CodeAndRetryAfter() (string, time.Duration) {
+	payload, _ := err.Payload.(map[string]any)
+	nested, _ := payload["error"].(map[string]any)
+	code := strings.TrimSpace(fmt.Sprint(nested["errorCode"]))
+	if code == "<nil>" {
+		code = "ICLOUD_ERROR"
+	}
+	retryAfter, _ := nested["retryAfter"].(float64)
+	if retryAfter <= 0 {
+		retryAfter, _ = payload["retryAfter"].(float64)
+	}
+	return code, time.Duration(retryAfter * float64(time.Second))
 }
 
 func isSessionExpired(err error) bool {
