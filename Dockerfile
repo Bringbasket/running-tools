@@ -4,6 +4,7 @@ COPY frontend/package.json frontend/package-lock.json ./frontend/
 RUN cd frontend && npm ci
 COPY frontend ./frontend
 COPY modules/mail/frontend ./modules/mail/frontend
+COPY modules/tools/frontend ./modules/tools/frontend
 RUN cd frontend && npm run build
 
 FROM golang:1.24.13-alpine AS backend
