@@ -1,0 +1,29 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "useDefineForClassFields": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"],
+      "@mail/*": ["../modules/mail/frontend/*"],
+      "@tools/*": ["../modules/tools/frontend/*"],
+      "@vue/test-utils": ["node_modules/@vue/test-utils"],
+      "vitest": ["node_modules/vitest"],
+      "vue": ["node_modules/vue"],
+      "vue-router": ["node_modules/vue-router"],
+      "@lucide/vue": ["node_modules/@lucide/vue"]
+    },
+    "strict": true,
+    "jsx": "preserve",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "skipLibCheck": true,
+    "types": ["vite/client", "vitest/globals"]
+  },
+  "include": ["src/**/*.ts", "src/**/*.vue", "../modules/**/*.ts", "../modules/**/*.vue"]
+}

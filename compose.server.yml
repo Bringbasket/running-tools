@@ -1,0 +1,24 @@
+services:
+  app:
+    image: ${RUNNING_IMAGE:-ghcr.io/bringbasket/running-tools:latest}
+    container_name: running-tools
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "127.0.0.1:${RUNNING_HOST_PORT:-8091}:8000"
+    volumes:
+      - ./data:/data
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8000/health"]
+      interval: 15s
+      timeout: 4s
+      retries: 4
+      start_period: 10s

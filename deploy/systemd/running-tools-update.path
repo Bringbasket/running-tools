@@ -1,0 +1,11 @@
+[Unit]
+Description=Watch for Running Tools update requests
+Documentation=https://github.com/Bringbasket/running-tools
+
+[Path]
+PathExists=/www/wwwroot/running-tools/data/system/check-request.json
+PathExists=/www/wwwroot/running-tools/data/system/update-request.json
+Unit=running-tools-update.service
+
+[Install]
+WantedBy=multi-user.target

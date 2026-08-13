@@ -1,0 +1,27 @@
+import { authState, logout } from './auth'
+import type { APIEnvelope } from './types'
+
+export class APIError extends Error {
+  constructor(public code: string, message: string, public status: number) {
+    super(message)
+  }
+}
+
+export async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const headers = new Headers(init.headers)
+  headers.set('X-API-Key', authState.apiKey)
+  if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
+  const response = await fetch(path, { ...init, headers, cache: 'no-store' })
+  const type = response.headers.get('content-type') || ''
+  if (!type.includes('application/json')) throw new APIError('BAD_RESPONSE', `服务器返回了 HTTP ${response.status}`, response.status)
+  const envelope = await response.json() as APIEnvelope<T>
+  if (!response.ok || !envelope.ok) {
+    if (response.status === 401) logout()
+    throw new APIError(envelope.error?.code || 'REQUEST_FAILED', envelope.error?.message || '请求失败', response.status)
+  }
+  return envelope.data
+}
+
+export function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}

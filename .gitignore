@@ -1,0 +1,16 @@
+.env
+data/
+data-runtime-*/
+dist/
+coverage/
+frontend/node_modules/
+internal/webui/dist/assets/
+*.log
+*.tmp
+*.exe
+*.test
+*.out
+*.tsbuildinfo
+.idea/
+.vscode/
+.DS_Store

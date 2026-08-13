@@ -1,0 +1,13 @@
+[Unit]
+Description=Pull and deploy the latest Running Tools image
+After=network-online.target docker.service
+Wants=network-online.target
+ConditionFileIsExecutable=/usr/local/sbin/running-tools-update
+
+[Service]
+Type=oneshot
+User=root
+UMask=0077
+ExecStart=/usr/local/sbin/running-tools-update
+TimeoutStartSec=20min
+Nice=10
