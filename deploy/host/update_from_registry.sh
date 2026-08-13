@@ -16,7 +16,17 @@ target_revision=""
 old_image=""
 image=""
 
-compose() { docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"; }
+compose_bin=()
+if docker compose version >/dev/null 2>&1; then
+  compose_bin=(docker compose)
+elif command -v docker-compose >/dev/null 2>&1; then
+  compose_bin=(docker-compose)
+else
+  echo "Docker Compose is not installed" >&2
+  exit 1
+fi
+
+compose() { "${compose_bin[@]}" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"; }
 
 write_status() {
   local state="$1" message="$2" error="${3:-}"
