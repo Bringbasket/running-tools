@@ -9,6 +9,18 @@ import (
 	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent"
 )
 
+// The ActivityLogFunc type is an adapter to allow the use of ordinary
+// function as ActivityLog mutator.
+type ActivityLogFunc func(context.Context, *ent.ActivityLogMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f ActivityLogFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.ActivityLogMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.ActivityLogMutation", m)
+}
+
 // The MailboxHiddenMessageFunc type is an adapter to allow the use of ordinary
 // function as MailboxHiddenMessage mutator.
 type MailboxHiddenMessageFunc func(context.Context, *ent.MailboxHiddenMessageMutation) (ent.Value, error)

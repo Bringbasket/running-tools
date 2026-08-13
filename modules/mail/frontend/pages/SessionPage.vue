@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ChevronRight, Clock3, KeyRound, LoaderCircle, RefreshCw, Save, ShieldAlert, ShieldCheck, Upload } from '../../../../frontend/src/icons'
 import { errorMessage } from '../../../../frontend/src/api'
 import { mailAPI } from '../api'
@@ -113,7 +113,9 @@ async function saveAuto() {
   finally { autoLoading.value = false }
 }
 
-onMounted(load)
+function handleAccountChange() { session.value = null; auto.value = null; appleId.value = ''; void load() }
+onMounted(() => { window.addEventListener('mail-account-change', handleAccountChange); void load() })
+onBeforeUnmount(() => window.removeEventListener('mail-account-change', handleAccountChange))
 </script>
 
 <template>

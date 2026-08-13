@@ -5,7 +5,7 @@
 - Go 1.24 或更高版本
 - Node.js 22 或更高版本
 - npm 11 或更高版本
-- PostgreSQL 15 或更高版本（`dual` 和 `postgres` 模式需要）
+- PostgreSQL 15 或更高版本（本地和生产默认需要）
 - Redis 7 或更高版本（生产多实例同步锁需要，单机不可用时允许降级）
 
 后端的目标技术栈为 Go + Gin + Ent。当前代码仍以标准库 HTTP 服务兼容旧接口，Ent
@@ -14,9 +14,16 @@ Router 和 Lucide 图标。
 
 所有页面的新建与重构必须遵守 [界面设计规范](UI_GUIDELINES.md)。页面评审先检查信息架构、操作路径和状态完整性，再检查视觉细节；不能仅通过更换配色或增加卡片视为完成优化。
 
+新增一级业务模块或后台任务时，还必须遵守 [使用日志设计规范](LOGGING.md)。模块日志复用平台
+日志仓库，但 API 和页面必须固定模块范围；不得由前端传入模块标识。
+
 数据库组件使用 pgx 和 go-redis，版本化 SQL 位于 `internal/platform/persistence/migrations`，
 Ent schema 位于 `internal/platform/persistence/ent/schema`。修改 schema 后必须重新生成 Ent
-代码并增加迁移文件，不能直接修改生成代码。
+代码并增加迁移文件，不能直接修改生成代码。当前生成命令需要启用项目已有的 upsert 特性：
+
+```bash
+go run entgo.io/ent/cmd/ent generate --feature sql/upsert ./internal/platform/persistence/ent/schema
+```
 
 ## 常用命令
 
@@ -57,6 +64,9 @@ go build -tags embed -o running-tools ./cmd/server
 
 ## 本地联调
 
+仓库根目录的 `.env` 会自动加载，但不会覆盖终端或容器已经设置的环境变量。默认存储模式为
+`postgres`，必须先创建 `running_tools` 数据库并填写 `RUNNING_DATABASE_URL`。
+
 终端一：
 
 ```powershell
@@ -89,7 +99,7 @@ npm run dev
 - 平台外壳必须根据模块清单渲染页面，不能硬编码邮件页面。
 - 一个模块不能写入另一个模块的数据目录。
 - 公共 API 行为发生变化时，必须同步更新 API 文档和兼容性测试。
-- 新增状态文件时，必须采用替换写入并设置严格权限。
+- 生产业务状态必须进入 PostgreSQL；仅宿主机通信文件可以继续使用原子文件写入和严格权限。
 - 模块专属前端代码不能放进根平台外壳。
 - 纯前端工具的计算公式应提取为独立 TypeScript 函数并添加单元测试，不能直接散落在
   DOM 事件或模板表达式中。

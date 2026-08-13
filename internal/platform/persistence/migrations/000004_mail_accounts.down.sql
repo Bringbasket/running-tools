@@ -1,0 +1,13 @@
+DROP INDEX IF EXISTS mailbox_hidden_messages_account_generation_uid;
+DROP INDEX IF EXISTS mailbox_hidden_messages_account_generation_alias_uid;
+DROP INDEX IF EXISTS mailbox_messages_account_generation_date;
+DROP INDEX IF EXISTS mailbox_messages_account_generation_uid;
+DROP INDEX IF EXISTS mailbox_sync_states_account_key;
+DROP INDEX IF EXISTS activity_logs_module_account_level_created_at;
+DROP INDEX IF EXISTS activity_logs_module_account_category_created_at;
+DROP INDEX IF EXISTS activity_logs_module_account_created_at;
+ALTER TABLE mailbox_hidden_messages DROP COLUMN IF EXISTS account_id;
+ALTER TABLE mailbox_messages DROP COLUMN IF EXISTS account_id;
+ALTER TABLE mailbox_sync_states DROP COLUMN IF EXISTS account_id;
+ALTER TABLE activity_logs DROP COLUMN IF EXISTS account_id;
+DROP TABLE IF EXISTS mail_accounts;

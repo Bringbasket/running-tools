@@ -27,6 +27,20 @@ func (_u *MailboxHiddenMessageUpdate) Where(ps ...predicate.MailboxHiddenMessage
 	return _u
 }
 
+// SetAccountID sets the "account_id" field.
+func (_u *MailboxHiddenMessageUpdate) SetAccountID(v string) *MailboxHiddenMessageUpdate {
+	_u.mutation.SetAccountID(v)
+	return _u
+}
+
+// SetNillableAccountID sets the "account_id" field if the given value is not nil.
+func (_u *MailboxHiddenMessageUpdate) SetNillableAccountID(v *string) *MailboxHiddenMessageUpdate {
+	if v != nil {
+		_u.SetAccountID(*v)
+	}
+	return _u
+}
+
 // SetGeneration sets the "generation" field.
 func (_u *MailboxHiddenMessageUpdate) SetGeneration(v string) *MailboxHiddenMessageUpdate {
 	_u.mutation.SetGeneration(v)
@@ -110,6 +124,11 @@ func (_u *MailboxHiddenMessageUpdate) ExecX(ctx context.Context) {
 
 // check runs all checks and user-defined validators on the builder.
 func (_u *MailboxHiddenMessageUpdate) check() error {
+	if v, ok := _u.mutation.AccountID(); ok {
+		if err := mailboxhiddenmessage.AccountIDValidator(v); err != nil {
+			return &ValidationError{Name: "account_id", err: fmt.Errorf(`ent: validator failed for field "MailboxHiddenMessage.account_id": %w`, err)}
+		}
+	}
 	if v, ok := _u.mutation.Generation(); ok {
 		if err := mailboxhiddenmessage.GenerationValidator(v); err != nil {
 			return &ValidationError{Name: "generation", err: fmt.Errorf(`ent: validator failed for field "MailboxHiddenMessage.generation": %w`, err)}
@@ -134,6 +153,9 @@ func (_u *MailboxHiddenMessageUpdate) sqlSave(ctx context.Context) (_node int, e
 				ps[i](selector)
 			}
 		}
+	}
+	if value, ok := _u.mutation.AccountID(); ok {
+		_spec.SetField(mailboxhiddenmessage.FieldAccountID, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.Generation(); ok {
 		_spec.SetField(mailboxhiddenmessage.FieldGeneration, field.TypeString, value)
@@ -165,6 +187,20 @@ type MailboxHiddenMessageUpdateOne struct {
 	fields   []string
 	hooks    []Hook
 	mutation *MailboxHiddenMessageMutation
+}
+
+// SetAccountID sets the "account_id" field.
+func (_u *MailboxHiddenMessageUpdateOne) SetAccountID(v string) *MailboxHiddenMessageUpdateOne {
+	_u.mutation.SetAccountID(v)
+	return _u
+}
+
+// SetNillableAccountID sets the "account_id" field if the given value is not nil.
+func (_u *MailboxHiddenMessageUpdateOne) SetNillableAccountID(v *string) *MailboxHiddenMessageUpdateOne {
+	if v != nil {
+		_u.SetAccountID(*v)
+	}
+	return _u
 }
 
 // SetGeneration sets the "generation" field.
@@ -263,6 +299,11 @@ func (_u *MailboxHiddenMessageUpdateOne) ExecX(ctx context.Context) {
 
 // check runs all checks and user-defined validators on the builder.
 func (_u *MailboxHiddenMessageUpdateOne) check() error {
+	if v, ok := _u.mutation.AccountID(); ok {
+		if err := mailboxhiddenmessage.AccountIDValidator(v); err != nil {
+			return &ValidationError{Name: "account_id", err: fmt.Errorf(`ent: validator failed for field "MailboxHiddenMessage.account_id": %w`, err)}
+		}
+	}
 	if v, ok := _u.mutation.Generation(); ok {
 		if err := mailboxhiddenmessage.GenerationValidator(v); err != nil {
 			return &ValidationError{Name: "generation", err: fmt.Errorf(`ent: validator failed for field "MailboxHiddenMessage.generation": %w`, err)}
@@ -304,6 +345,9 @@ func (_u *MailboxHiddenMessageUpdateOne) sqlSave(ctx context.Context) (_node *Ma
 				ps[i](selector)
 			}
 		}
+	}
+	if value, ok := _u.mutation.AccountID(); ok {
+		_spec.SetField(mailboxhiddenmessage.FieldAccountID, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.Generation(); ok {
 		_spec.SetField(mailboxhiddenmessage.FieldGeneration, field.TypeString, value)

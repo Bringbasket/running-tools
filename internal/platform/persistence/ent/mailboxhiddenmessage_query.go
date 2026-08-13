@@ -262,12 +262,12 @@ func (_q *MailboxHiddenMessageQuery) Clone() *MailboxHiddenMessageQuery {
 // Example:
 //
 //	var v []struct {
-//		Generation string `json:"generation,omitempty"`
+//		AccountID string `json:"account_id,omitempty"`
 //		Count int `json:"count,omitempty"`
 //	}
 //
 //	client.MailboxHiddenMessage.Query().
-//		GroupBy(mailboxhiddenmessage.FieldGeneration).
+//		GroupBy(mailboxhiddenmessage.FieldAccountID).
 //		Aggregate(ent.Count()).
 //		Scan(ctx, &v)
 func (_q *MailboxHiddenMessageQuery) GroupBy(field string, fields ...string) *MailboxHiddenMessageGroupBy {
@@ -285,11 +285,11 @@ func (_q *MailboxHiddenMessageQuery) GroupBy(field string, fields ...string) *Ma
 // Example:
 //
 //	var v []struct {
-//		Generation string `json:"generation,omitempty"`
+//		AccountID string `json:"account_id,omitempty"`
 //	}
 //
 //	client.MailboxHiddenMessage.Query().
-//		Select(mailboxhiddenmessage.FieldGeneration).
+//		Select(mailboxhiddenmessage.FieldAccountID).
 //		Scan(ctx, &v)
 func (_q *MailboxHiddenMessageQuery) Select(fields ...string) *MailboxHiddenMessageSelect {
 	_q.ctx.Fields = append(_q.ctx.Fields, fields...)

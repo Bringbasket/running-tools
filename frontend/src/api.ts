@@ -1,6 +1,8 @@
 import { authState, logout } from './auth'
 import type { APIEnvelope } from './types'
 
+const mailAccountStorageKey = 'running-mail-account-id'
+
 export class APIError extends Error {
   constructor(public code: string, message: string, public status: number) {
     super(message)
@@ -10,6 +12,9 @@ export class APIError extends Error {
 export async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers)
   headers.set('X-API-Key', authState.apiKey)
+  if (path.startsWith('/api/mail/') && !path.endsWith('/accounts')) {
+    headers.set('X-Mail-Account-ID', localStorage.getItem(mailAccountStorageKey) || 'default')
+  }
   if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
   const response = await fetch(path, { ...init, headers, cache: 'no-store' })
   const type = response.headers.get('content-type') || ''

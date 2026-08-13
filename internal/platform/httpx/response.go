@@ -37,6 +37,12 @@ func WriteData(w http.ResponseWriter, r *http.Request, status int, data any) {
 }
 
 func WriteError(w http.ResponseWriter, r *http.Request, status int, code, message string) {
+	if tracker, ok := w.(interface{ SetErrorCode(string) }); ok {
+		tracker.SetErrorCode(code)
+	}
+	if tracker, ok := w.(interface{ SetErrorDetail(string) }); ok {
+		tracker.SetErrorDetail(message)
+	}
 	writeJSON(w, status, Envelope{
 		OK:   false,
 		Data: nil,

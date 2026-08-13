@@ -3,9 +3,9 @@
 ## 模块技术栈
 
 邮件模块遵循项目统一规范：Go + Gin + Ent（后端）、Vue 3 + TypeScript + Vite（前端）、
-PostgreSQL 15+ + Redis 7+（目标数据层）。当前版本为了兼容原 `hme-manager`，仍使用
-Go HTTP 服务和 JSON 文件保存 Session/状态；Gin、Ent、PostgreSQL 和 Redis 暂未启用，
-后续接入不得改变现有 API 兼容性和 Cookie 最小暴露原则。
+PostgreSQL 15+ + Redis 7+（数据层）。当前版本为了兼容原 `hme-manager`，仍使用
+Go 标准库 HTTP 服务；生产数据统一进入 PostgreSQL，Redis 用于多实例同步锁。旧 JSON 只会在
+首次启动时导入，不再作为生产读写源。
 
 邮件系统使用已经获得授权的 iCloud 网页 Session 管理隐藏邮件地址。前端支持 Apple
 SRP 协议登录：Apple ID、密码和两步验证码会经当前服务进程转发给 Apple；密码和验证码
@@ -31,6 +31,14 @@ SRP 协议登录：Apple ID、密码和两步验证码会经当前服务进程�
 - 可暂停、继续、取消并可重启恢复的持久化批量队列；
 - 可撤销、可设置有效期的只读分享链接；
 - TLS 只读 IMAP 收件箱、邮件缓存和验证码识别。
+- 邮件系统独立使用日志、筛选、分页和详情追踪。
+
+## 使用日志
+
+侧边栏“使用日志”只展示邮件系统的用户操作和后台任务，不会混入工具箱或未来模块日志。
+日志支持关键词、级别、分类、来源和日期筛选，默认保留 30 天且最多 10,000 条。日志查询、
+状态轮询和长轮询不会产生新日志；Cookie、密码、API Key、邮件正文和验证码禁止写入日志。
+完整平台规范见 [`../../../docs/LOGGING.md`](../../../docs/LOGGING.md)。
 
 ## 导入 Session
 
@@ -56,8 +64,8 @@ Session 页面默认使用 Apple 协议登录。`iCloud Web` 是完整主会话�
 - `X-APPLE-WEBAUTH-USER`
 - `X-APPLE-WEBAUTH-TOKEN`
 
-Cookie 只保存在 `hme-config.json` 中，该文件必须只有所有者可读写。Session 状态
-接口不会返回 Cookie。
+Cookie 在生产模式保存在 PostgreSQL `running_state` 中；旧 `hme-config.json` 仅作为首次导入
+来源。Session 状态接口不会返回 Cookie。
 
 ## 自动刷新
 
@@ -71,30 +79,28 @@ Session。重新导入不会把 Cookie 写入日志或返回给前端。
 
 在“隐藏邮箱”页面的“自动创建计划”中配置并开启即可。任务由 Go 服务端 Worker 执行，不依赖宝塔或浏览器页面。
 
-默认参数为每轮 5 个、每个邮箱间隔 3 秒、每轮间隔 180 秒，标签为 `shopping`，备注为空。配置保存在 `data/mail/state/create-schedule.json`。
+默认参数为每轮 5 个、每个邮箱间隔 3 秒、每轮间隔 180 秒，标签为 `shopping`，备注为空。
+配置按邮件账号保存在 PostgreSQL；每个账号有独立 Worker，可以同时运行互不阻塞。
 
 单次创建和自动创建都优先使用 Apple Account，失败且尚未进入确认阶段时自动使用 iCloud Web
 兜底。Apple Account 首次认证失效会先刷新管理态并安全重试一次；确认请求已发送后不会盲目
 重试。通道限额和暂时错误会进入持久冷却，自动创建本轮后续地址直接跳过冷却通道。
 
-## 持久化文件
+## PostgreSQL 持久化
 
-| 文件 | 内容 |
+| 表 | 内容 |
 | --- | --- |
-| `data/mail/hme-config.json` | iCloud 主机、请求元数据和 Cookie |
-| `data/mail/state/hme-session.json` | 不含秘密的 Session 元数据 |
-| `data/mail/state/session-state.json` | 最近一次 Session 检查结果、邮箱数量和转发地址摘要 |
-| `data/mail/state/apple-account-state.json` | Apple Account 短时管理态、Cookie、scnt 和动态 API Key，权限 `0600` |
-| `data/mail/state/create-channels.json` | 两个创建通道的冷却截止时间、最近创建和错误摘要 |
-| `data/mail/state/auto-refresh.json` | 自动刷新设置和执行时间 |
-| `data/mail/state/create-schedule.json` | 后台创建计划设置和执行状态 |
-| `data/mail/state/alias-queue.json` | 持久化批量队列、候选地址和错误状态 |
-| `data/mail/state/share-links.json` | 分享链接和浏览器会话的 SHA-256 摘要 |
-| `data/mail/state/mailbox-cache.json` | IMAP UID 游标、白名单邮件的纯文本/安全 HTML 缓存、验证码和本地隐藏记录 |
-| `data/mail/state/mailbox-config.json` | 前端保存的 IMAP 连接与同步设置，权限 `0600`，密码不通过 API 回显 |
+| `mail_accounts` | 邮件账号及显示身份 |
+| `running_state` | 每账号 Session、登录态、配置和任务当前状态 |
+| `mailbox_messages` | IMAP 邮件正文、安全 HTML 和验证码索引 |
+| `mailbox_hidden_messages` | 每账号的本地隐藏记录 |
+| `mailbox_sync_states` | 每账号 IMAP UID 游标与同步状态 |
+| `mail_share_links` | 每账号分享链接摘要、有效期和撤销状态 |
+| `mail_share_sessions` | 分享浏览器会话摘要和有效期 |
+| `activity_logs` | 每账号使用日志，默认 30 天且最多 10,000 条 |
 
-文件使用临时文件加替换的方式写入，并设置为所有者专用权限。API 响应不会包含
-`hme-config.json` 内容或 Cookie 值。
+所有邮件 API 通过 `X-Mail-Account-ID` 选择账号。网页切换账号只改变当前视图，其他账号的
+自动刷新、自动创建和 IMAP Worker 会继续运行。敏感字段不会通过 API 回显或写入日志。
 
 ## 标准接口与兼容接口
 

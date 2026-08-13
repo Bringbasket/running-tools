@@ -9,13 +9,15 @@ const status = ref<MailboxStatus | null>(null)
 const loading = ref(false)
 const error = ref('')
 const notice = ref('')
-const alias = ref('')
+const initialAlias = new URLSearchParams(window.location.search).get('alias')?.trim().toLowerCase() || ''
+const alias = ref(initialAlias)
+const scopedAlias = ref(initialAlias)
 const messages = ref<MailMessage[]>([])
 const selected = ref(new Set<string>())
 const detail = ref<MailMessage | null>(null)
 const detailMode = ref<'text' | 'html'>('text')
 const page = ref(1)
-const pageSize = ref(20)
+const pageSize = ref(10)
 const settingsOpen = ref(false)
 const settingsLoading = ref(false)
 const settingsSaving = ref(false)
@@ -25,10 +27,20 @@ const settingsNotice = ref('')
 const passwordConfigured = ref(false)
 const settingsSource = ref<MailboxSettings['source']>('environment')
 const settingsForm = ref<MailboxSettingsInput>({
-  username: '', password: '', host: 'imap.gmail.com', port: 993, mailbox: 'INBOX',
+  username: '', password: '', host: 'imap.mail.me.com', port: 993, mailbox: 'INBOX',
   enabled: false, pollSeconds: 120, lookbackDays: 90, cacheMax: 5000,
 })
 let stopped = false
+
+const providerHosts = new Set(['imap.mail.me.com', 'imap.icloud.com', 'imap.gmail.com', 'outlook.office365.com'])
+
+function recommendedIMAPHost(username: string) {
+  const address = username.trim().toLowerCase()
+  if (address.endsWith('@icloud.com') || address.endsWith('@me.com') || address.endsWith('@mac.com')) return 'imap.mail.me.com'
+  if (address.endsWith('@gmail.com') || address.endsWith('@googlemail.com')) return 'imap.gmail.com'
+  if (address.endsWith('@outlook.com') || address.endsWith('@hotmail.com') || address.endsWith('@live.com')) return 'outlook.office365.com'
+  return ''
+}
 
 const filtered = computed(() => {
   const query = alias.value.trim().toLowerCase()
@@ -43,12 +55,19 @@ const syncMode = computed(() => ({ idle: '实时监听', sync: '正在同步', p
 
 watch([alias, pageSize], () => { page.value = 1 })
 watch(pageCount, (count) => { if (page.value > count) page.value = count })
+watch(() => settingsForm.value.username, (username) => {
+  const recommended = recommendedIMAPHost(username)
+  const current = settingsForm.value.host.trim().toLowerCase()
+  if (recommended && (!current || providerHosts.has(current))) settingsForm.value.host = recommended
+})
 
 async function load(showLoading = true) {
   if (showLoading) loading.value = true
   error.value = ''
   try {
-    const result = await mailAPI.mailboxRecent(500)
+    const result = scopedAlias.value
+      ? await mailAPI.mailboxMessages(scopedAlias.value, 100)
+      : await mailAPI.mailboxRecent(500)
     messages.value = result.messages
     status.value = result.sync
     selected.value = new Set()
@@ -190,10 +209,23 @@ async function copyCode(code: string) {
     error.value = errorMessage(reason)
   }
 }
+async function clearMessages() {
+  if (!messages.value.length || !window.confirm(`确认永久清理当前账号的 ${messages.value.length} 封本地收件箱缓存？`)) return
+  loading.value = true; error.value = ''
+  try { await mailAPI.clearMailboxMessages(); messages.value = []; page.value = 1 }
+  catch (reason) { error.value = errorMessage(reason) }
+  finally { loading.value = false }
+}
 function setPage(next: number) { page.value = Math.min(pageCount.value, Math.max(1, next)) }
+function clearAliasFilter() {
+  scopedAlias.value = ''
+  alias.value = ''
+  void load()
+}
 
-onMounted(async () => { await load(); void watchMailbox() })
-onBeforeUnmount(() => { stopped = true })
+async function handleAccountChange() { stopped = true; await load(); stopped = false; void watchMailbox() }
+onMounted(async () => { window.addEventListener('mail-account-change', handleAccountChange); await load(); void watchMailbox() })
+onBeforeUnmount(() => { stopped = true; window.removeEventListener('mail-account-change', handleAccountChange) })
 </script>
 
 <template>
@@ -201,6 +233,7 @@ onBeforeUnmount(() => { stopped = true })
     <div class="page-heading">
       <div><h2>收件箱</h2><p>查看隐藏邮箱转发的最近邮件和验证码。</p></div>
       <div class="page-actions">
+        <button class="button ghost danger-action" :disabled="loading || !messages.length" @click="clearMessages"><Trash2 :size="16" />清理缓存</button>
         <button class="button ghost" :disabled="settingsLoading" @click="openSettings"><Settings2 :size="16" />IMAP 设置</button>
         <button class="button ghost" :disabled="loading" @click="load()"><RefreshCw :size="16" :class="{ spin: loading }" />刷新列表</button>
         <button class="button primary" :disabled="loading || !status?.configured" @click="run"><LoaderCircle v-if="loading" :size="16" class="spin" /><MailOpen v-else :size="16" />立即同步</button>
@@ -224,6 +257,7 @@ onBeforeUnmount(() => { stopped = true })
     <div class="table-panel">
       <div class="toolbar mailbox-toolbar">
         <label class="search-field"><MailOpen :size="17" /><input v-model="alias" placeholder="搜索隐藏邮箱地址" /></label>
+        <span v-if="alias" class="mailbox-filter">当前地址：{{ alias }} <button class="icon-button" title="清除地址筛选" aria-label="清除地址筛选" @click="clearAliasFilter"><X :size="14" /></button></span>
         <div class="toolbar-tail">
           <button v-if="selected.size" class="button ghost" @click="hideSelected"><Trash2 :size="16" />隐藏所选 {{ selected.size }} 封</button>
           <label class="page-size">每页<select v-model.number="pageSize"><option :value="10">10</option><option :value="20">20</option><option :value="50">50</option><option :value="100">100</option></select>条</label>
@@ -263,8 +297,8 @@ onBeforeUnmount(() => { stopped = true })
           <label class="toggle-row"><span><strong>启用后台同步</strong><small>优先实时监听，不支持 IMAP IDLE 时按间隔轮询。</small></span><input v-model="settingsForm.enabled" type="checkbox" role="switch" /></label>
           <div class="imap-form-grid">
             <label class="field full"><span>IMAP 账号</span><input v-model.trim="settingsForm.username" type="text" autocomplete="username" placeholder="mail@example.com" maxlength="320" /></label>
-            <label class="field full"><span>应用专用密码</span><input v-model="settingsForm.password" type="password" autocomplete="new-password" :placeholder="passwordConfigured ? '已保存；留空表示不修改' : '请输入应用专用密码'" maxlength="4096" /><small>密码只保存到服务器数据目录，页面和接口不会读回明文。</small></label>
-            <label class="field host-field"><span>IMAP 服务器</span><input v-model.trim="settingsForm.host" type="text" placeholder="imap.gmail.com" /></label>
+            <label class="field full"><span>应用专用密码</span><input v-model="settingsForm.password" type="password" autocomplete="new-password" :placeholder="passwordConfigured ? '已保存；留空表示不修改' : '请输入应用专用密码'" maxlength="4096" /><small>iCloud 必须使用 Apple Account 生成的 App 专用密码，不能使用 Apple ID 登录密码。密码不会通过页面或接口读回。</small></label>
+            <label class="field host-field"><span>IMAP 服务器</span><input v-model.trim="settingsForm.host" type="text" placeholder="imap.mail.me.com" /></label>
             <label class="field port-field"><span>端口</span><input v-model.number="settingsForm.port" type="number" min="1" max="65535" /></label>
             <label class="field full"><span>邮箱目录</span><input v-model.trim="settingsForm.mailbox" type="text" placeholder="INBOX" maxlength="255" /></label>
           </div>
@@ -294,6 +328,8 @@ onBeforeUnmount(() => { stopped = true })
 
 <style scoped>
 .mailbox-page { gap: 18px; }
+.mailbox-filter { display: inline-flex; align-items: center; gap: 4px; color: var(--text-secondary); font-size: 13px; white-space: nowrap; }
+.mailbox-filter .icon-button { width: 24px; height: 24px; }
 .mailbox-warning { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .button.compact { min-height: 30px; padding: 0 10px; white-space: nowrap; }
 .mailbox-summary { display: flex; min-height: 42px; align-items: center; gap: 10px; padding: 0 14px; color: var(--muted); background: var(--surface); border: 1px solid var(--border); border-radius: 7px; font-size: 12px; }

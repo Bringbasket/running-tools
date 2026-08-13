@@ -12,22 +12,34 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Bringbasket/running-tools/internal/platform/activitylog"
 	"github.com/Bringbasket/running-tools/internal/platform/httpx"
 )
 
 type routeAPI struct {
+	module     *Module
 	session    *SessionManager
 	refresh    *AutoRefresh
 	creation   *CreateScheduler
 	queue      *AliasQueue
 	shares     *ShareLinkStore
 	mailbox    *MailboxService
+	logs       *activitylog.Store
 	createGate *sync.Mutex
 }
 
 func (api *routeAPI) register(mux *http.ServeMux, auth httpx.Middleware, base string, legacy bool) {
 	protect := func(method, path string, handler http.HandlerFunc) {
-		mux.Handle(method+" "+base+path, auth(handler))
+		wrapped := http.Handler(handler)
+		if definition, ok := mailLogDefinition(method, path); ok {
+			wrapped = api.activityLogMiddleware(definition, method, base+path)(wrapped)
+		}
+		wrapped = api.accountMiddleware(wrapped)
+		mux.Handle(method+" "+base+path, auth(wrapped))
+	}
+	if !legacy {
+		mux.Handle("GET "+base+"/accounts", auth(http.HandlerFunc(api.accounts)))
+		mux.Handle("POST "+base+"/accounts", auth(http.HandlerFunc(api.createAccount)))
 	}
 	protect(http.MethodGet, "/aliases", api.listAliases)
 	protect(http.MethodPost, "/aliases", api.createAlias)
@@ -43,6 +55,7 @@ func (api *routeAPI) register(mux *http.ServeMux, auth httpx.Middleware, base st
 	protect(http.MethodGet, "/aliases/{id}/share-links", api.shareLinks)
 	protect(http.MethodPost, "/aliases/{id}/share-links", api.createShareLink)
 	protect(http.MethodPost, "/share-links/{id}/revoke", api.revokeShareLink)
+	protect(http.MethodPost, "/share-links/clear-inactive", api.clearInactiveShareLinks)
 	protect(http.MethodGet, "/mail/sync/status", api.mailboxStatus)
 	protect(http.MethodPost, "/mail/sync/run", api.mailboxRun)
 	protect(http.MethodGet, "/mail/settings", api.mailboxSettings)
@@ -53,6 +66,7 @@ func (api *routeAPI) register(mux *http.ServeMux, auth httpx.Middleware, base st
 	protect(http.MethodGet, "/mail/messages/{uid}", api.mailMessage)
 	protect(http.MethodPost, "/mail/messages/{uid}/hide", api.mailHide)
 	protect(http.MethodPost, "/mail/messages/hide-batch", api.mailHideBatch)
+	protect(http.MethodPost, "/mail/messages/clear", api.mailClear)
 	protect(http.MethodGet, "/mail/sync/wait", api.mailboxWait)
 	protect(http.MethodGet, "/alias-queue", api.aliasQueueStatus)
 	protect(http.MethodPost, "/alias-queue", api.aliasQueueEnqueue)
@@ -72,6 +86,10 @@ func (api *routeAPI) register(mux *http.ServeMux, auth httpx.Middleware, base st
 	protect(http.MethodPost, "/create-schedule/run", api.createScheduleRun)
 	protect(http.MethodPost, "/create-schedule/stop", api.createScheduleStop)
 	if !legacy {
+		protect(http.MethodGet, "/activity-logs", api.activityLogs)
+		protect(http.MethodPost, "/activity-logs/clear", api.clearActivityLogs)
+	}
+	if !legacy {
 		mux.HandleFunc("GET /share", api.sharePage)
 		mux.HandleFunc("GET /share/", api.sharePage)
 		mux.HandleFunc("GET /share/share.css", api.shareCSS)
@@ -85,10 +103,10 @@ func (api *routeAPI) register(mux *http.ServeMux, auth httpx.Middleware, base st
 }
 
 func (api *routeAPI) mailboxStatus(w http.ResponseWriter, r *http.Request) {
-	httpx.WriteData(w, r, http.StatusOK, api.mailbox.Status())
+	httpx.WriteData(w, r, http.StatusOK, api.mailboxFor(r).Status())
 }
 func (api *routeAPI) mailboxSettings(w http.ResponseWriter, r *http.Request) {
-	httpx.WriteData(w, r, http.StatusOK, api.mailbox.Settings())
+	httpx.WriteData(w, r, http.StatusOK, api.mailboxFor(r).Settings())
 }
 func (api *routeAPI) mailboxSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 	var payload MailboxSettingsInput
@@ -96,7 +114,7 @@ func (api *routeAPI) mailboxSettingsUpdate(w http.ResponseWriter, r *http.Reques
 		httpx.WriteError(w, r, http.StatusBadRequest, "BAD_REQUEST", err.Error())
 		return
 	}
-	settings, err := api.mailbox.UpdateSettings(payload)
+	settings, err := api.mailboxFor(r).UpdateSettings(payload)
 	if err != nil {
 		if errors.Is(err, ErrInvalidMailboxSettings) {
 			httpx.WriteError(w, r, http.StatusBadRequest, "BAD_REQUEST", err.Error())
@@ -113,7 +131,7 @@ func (api *routeAPI) mailboxSettingsTest(w http.ResponseWriter, r *http.Request)
 		httpx.WriteError(w, r, http.StatusBadRequest, "BAD_REQUEST", err.Error())
 		return
 	}
-	if err := api.mailbox.TestSettings(payload); err != nil {
+	if err := api.mailboxFor(r).TestSettings(payload); err != nil {
 		status := http.StatusServiceUnavailable
 		code := "MAILBOX_UNAVAILABLE"
 		if errors.Is(err, ErrInvalidMailboxSettings) {
@@ -126,7 +144,7 @@ func (api *routeAPI) mailboxSettingsTest(w http.ResponseWriter, r *http.Request)
 	httpx.WriteData(w, r, http.StatusOK, map[string]bool{"connected": true})
 }
 func (api *routeAPI) mailboxRun(w http.ResponseWriter, r *http.Request) {
-	aliases, err := api.session.ListAliases(r.Context())
+	aliases, err := api.sessionFor(r).ListAliases(r.Context())
 	if err != nil {
 		api.writeMailError(w, r, err)
 		return
@@ -140,7 +158,7 @@ func (api *routeAPI) mailboxRun(w http.ResponseWriter, r *http.Request) {
 			addresses = append(addresses, address)
 		}
 	}
-	status, err := api.mailbox.RunSync(addresses)
+	status, err := api.mailboxFor(r).RunSync(addresses)
 	if err != nil {
 		httpx.WriteError(w, r, http.StatusServiceUnavailable, "MAILBOX_UNAVAILABLE", err.Error())
 		return
@@ -153,13 +171,13 @@ func (api *routeAPI) mailMessages(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, http.StatusBadRequest, "BAD_REQUEST", "alias is required")
 		return
 	}
-	limit := 20
+	limit := 10
 	if raw := r.URL.Query().Get("limit"); raw != "" {
 		if n, err := strconv.Atoi(raw); err == nil {
 			limit = n
 		}
 	}
-	httpx.WriteData(w, r, http.StatusOK, api.mailbox.Messages(alias, limit))
+	httpx.WriteData(w, r, http.StatusOK, api.mailboxFor(r).Messages(alias, limit))
 }
 
 func (api *routeAPI) mailRecent(w http.ResponseWriter, r *http.Request) {
@@ -169,7 +187,7 @@ func (api *routeAPI) mailRecent(w http.ResponseWriter, r *http.Request) {
 			limit = n
 		}
 	}
-	httpx.WriteData(w, r, http.StatusOK, api.mailbox.Recent(limit))
+	httpx.WriteData(w, r, http.StatusOK, api.mailboxFor(r).Recent(limit))
 }
 func (api *routeAPI) mailMessage(w http.ResponseWriter, r *http.Request) {
 	uid64, err := strconv.ParseUint(r.PathValue("uid"), 10, 32)
@@ -177,7 +195,7 @@ func (api *routeAPI) mailMessage(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, http.StatusBadRequest, "BAD_REQUEST", "uid 无效")
 		return
 	}
-	message, ok := api.mailbox.Message(r.URL.Query().Get("alias"), uint32(uid64))
+	message, ok := api.mailboxFor(r).Message(r.URL.Query().Get("alias"), uint32(uid64))
 	if !ok {
 		httpx.WriteError(w, r, http.StatusNotFound, "MAIL_MESSAGE_NOT_FOUND", "未找到该邮件")
 		return
@@ -199,7 +217,7 @@ func (api *routeAPI) mailHide(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, http.StatusBadRequest, "BAD_REQUEST", err.Error())
 		return
 	}
-	result, err := api.mailbox.Hide(payload.Alias, uint32(uid64), payload.UIDValidity, payload.MailboxGeneration)
+	result, err := api.mailboxFor(r).Hide(payload.Alias, uint32(uid64), payload.UIDValidity, payload.MailboxGeneration)
 	if err != nil {
 		httpx.WriteError(w, r, http.StatusConflict, "MAILBOX_GENERATION_CHANGED", err.Error())
 		return
@@ -223,12 +241,20 @@ func (api *routeAPI) mailHideBatch(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, http.StatusBadRequest, "BAD_REQUEST", "messages 数量必须为 1 到 200")
 		return
 	}
-	result, err := api.mailbox.HideBatch(payload.Messages, payload.UIDValidity, payload.MailboxGeneration)
+	result, err := api.mailboxFor(r).HideBatch(payload.Messages, payload.UIDValidity, payload.MailboxGeneration)
 	if err != nil {
 		httpx.WriteError(w, r, http.StatusConflict, "MAILBOX_GENERATION_CHANGED", err.Error())
 		return
 	}
 	httpx.WriteData(w, r, http.StatusOK, result)
+}
+
+func (api *routeAPI) mailClear(w http.ResponseWriter, r *http.Request) {
+	if err := api.mailboxFor(r).Clear(r.Context()); err != nil {
+		httpx.WriteError(w, r, http.StatusInternalServerError, "MAILBOX_STORAGE_ERROR", "清理收件箱缓存失败")
+		return
+	}
+	httpx.WriteData(w, r, http.StatusOK, map[string]bool{"cleared": true})
 }
 func (api *routeAPI) mailboxWait(w http.ResponseWriter, r *http.Request) {
 	revision, _ := strconv.ParseInt(r.URL.Query().Get("revision"), 10, 64)
@@ -239,7 +265,7 @@ func (api *routeAPI) mailboxWait(w http.ResponseWriter, r *http.Request) {
 	if seconds > 30 {
 		seconds = 30
 	}
-	httpx.WriteData(w, r, http.StatusOK, api.mailbox.WaitForRevision(revision, time.Duration(seconds)*time.Second))
+	httpx.WriteData(w, r, http.StatusOK, api.mailboxFor(r).WaitForRevision(revision, time.Duration(seconds)*time.Second))
 }
 
 func shareJSON(w http.ResponseWriter, status int, payload any) {
@@ -286,7 +312,21 @@ func (api *routeAPI) shareSession(w http.ResponseWriter, r *http.Request) {
 		shareJSON(w, http.StatusBadRequest, map[string]string{"error": "令牌格式无效"})
 		return
 	}
-	sessionToken, link, ok := api.shares.CreateSession(payload.Token, 7*24*60*60)
+	var sessionToken string
+	var link ShareLink
+	var ok bool
+	if api.module != nil {
+		for _, account := range api.module.accountList() {
+			if runtime, exists := api.module.runtime(account.ID); exists {
+				sessionToken, link, ok = runtime.shares.CreateSession(payload.Token, 7*24*60*60)
+				if ok {
+					break
+				}
+			}
+		}
+	} else {
+		sessionToken, link, ok = api.shares.CreateSession(payload.Token, 7*24*60*60)
+	}
 	if !ok {
 		shareJSON(w, http.StatusGone, map[string]string{"error": "分享链接已过期或已撤销"})
 		return
@@ -308,31 +348,42 @@ func (api *routeAPI) shareSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (api *routeAPI) sharedAlias(r *http.Request) string {
-	link, ok := api.sharedLink(r)
+	_, link, ok := api.sharedLink(r)
 	if !ok {
 		return ""
 	}
 	return shareAlias(link.Alias)
 }
 
-func (api *routeAPI) sharedLink(r *http.Request) (ShareLink, bool) {
+func (api *routeAPI) sharedLink(r *http.Request) (*accountRuntime, ShareLink, bool) {
 	cookie, err := r.Cookie("hme_share_session")
 	if err != nil {
-		return ShareLink{}, false
+		return nil, ShareLink{}, false
 	}
-	return api.shares.ResolveSession(cookie.Value)
+	if api.module != nil {
+		for _, account := range api.module.accountList() {
+			if runtime, exists := api.module.runtime(account.ID); exists {
+				if link, ok := runtime.shares.ResolveSession(cookie.Value); ok {
+					return runtime, link, true
+				}
+			}
+		}
+		return nil, ShareLink{}, false
+	}
+	link, ok := api.shares.ResolveSession(cookie.Value)
+	return api.runtimeFor(r), link, ok
 }
 func (api *routeAPI) shareInfo(w http.ResponseWriter, r *http.Request) {
-	link, ok := api.sharedLink(r)
+	runtime, link, ok := api.sharedLink(r)
 	if !ok {
 		shareJSON(w, http.StatusGone, map[string]string{"error": "分享链接无效"})
 		return
 	}
-	shareJSON(w, http.StatusOK, map[string]any{"alias": shareAlias(link.Alias), "createdAt": link.CreatedAt, "expiresAt": link.ExpiresAt, "sync": api.mailbox.Status()})
+	shareJSON(w, http.StatusOK, map[string]any{"alias": shareAlias(link.Alias), "createdAt": link.CreatedAt, "expiresAt": link.ExpiresAt, "sync": runtime.mailbox.Status()})
 }
 func (api *routeAPI) shareMessages(w http.ResponseWriter, r *http.Request) {
-	alias := api.sharedAlias(r)
-	if alias == "" {
+	runtime, link, ok := api.sharedLink(r)
+	if !ok {
 		shareJSON(w, http.StatusGone, map[string]string{"error": "分享链接无效"})
 		return
 	}
@@ -345,12 +396,12 @@ func (api *routeAPI) shareMessages(w http.ResponseWriter, r *http.Request) {
 		}
 		limit = parsed
 	}
-	shareJSON(w, http.StatusOK, api.mailbox.Messages(alias, limit))
+	shareJSON(w, http.StatusOK, runtime.mailbox.Messages(shareAlias(link.Alias), limit))
 }
 
 func (api *routeAPI) shareMessage(w http.ResponseWriter, r *http.Request) {
-	alias := api.sharedAlias(r)
-	if alias == "" {
+	runtime, link, ok := api.sharedLink(r)
+	if !ok {
 		shareJSON(w, http.StatusGone, map[string]string{"error": "分享链接无效"})
 		return
 	}
@@ -359,7 +410,7 @@ func (api *routeAPI) shareMessage(w http.ResponseWriter, r *http.Request) {
 		shareJSON(w, http.StatusBadRequest, map[string]string{"error": "uid 无效"})
 		return
 	}
-	message, ok := api.mailbox.Message(alias, uint32(uid))
+	message, ok := runtime.mailbox.Message(shareAlias(link.Alias), uint32(uid))
 	if !ok {
 		shareJSON(w, http.StatusNotFound, map[string]string{"error": "未找到该邮件"})
 		return
@@ -368,7 +419,8 @@ func (api *routeAPI) shareMessage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (api *routeAPI) shareWait(w http.ResponseWriter, r *http.Request) {
-	if api.sharedAlias(r) == "" {
+	runtime, _, ok := api.sharedLink(r)
+	if !ok {
 		shareJSON(w, http.StatusGone, map[string]string{"error": "分享链接无效"})
 		return
 	}
@@ -386,19 +438,19 @@ func (api *routeAPI) shareWait(w http.ResponseWriter, r *http.Request) {
 		}
 		timeout = parsed
 	}
-	shareJSON(w, http.StatusOK, api.mailbox.WaitForRevision(revision, time.Duration(timeout)*time.Second))
+	shareJSON(w, http.StatusOK, runtime.mailbox.WaitForRevision(revision, time.Duration(timeout)*time.Second))
 }
 
 func (api *routeAPI) shareLinks(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimSpace(r.PathValue("id"))
-	aliases, err := api.session.ListAliases(r.Context())
+	aliases, err := api.sessionFor(r).ListAliases(r.Context())
 	if err != nil {
 		api.writeMailError(w, r, err)
 		return
 	}
 	for _, a := range aliases {
 		if fmt.Sprint(a["anonymousId"]) == id {
-			httpx.WriteData(w, r, http.StatusOK, map[string]any{"alias": a["hme"], "links": api.shares.List(fmt.Sprint(a["hme"]))})
+			httpx.WriteData(w, r, http.StatusOK, map[string]any{"alias": a["hme"], "links": api.sharesFor(r).List(fmt.Sprint(a["hme"]))})
 			return
 		}
 	}
@@ -406,7 +458,7 @@ func (api *routeAPI) shareLinks(w http.ResponseWriter, r *http.Request) {
 }
 func (api *routeAPI) createShareLink(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimSpace(r.PathValue("id"))
-	aliases, err := api.session.ListAliases(r.Context())
+	aliases, err := api.sessionFor(r).ListAliases(r.Context())
 	if err != nil {
 		api.writeMailError(w, r, err)
 		return
@@ -435,7 +487,7 @@ func (api *routeAPI) createShareLink(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	result, err := api.shares.Create(alias, payload.ExpiresInSeconds)
+	result, err := api.sharesFor(r).Create(alias, payload.ExpiresInSeconds)
 	if err != nil {
 		httpx.WriteError(w, r, http.StatusBadRequest, "BAD_REQUEST", err.Error())
 		return
@@ -444,11 +496,20 @@ func (api *routeAPI) createShareLink(w http.ResponseWriter, r *http.Request) {
 }
 func (api *routeAPI) revokeShareLink(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimSpace(r.PathValue("id"))
-	if !api.shares.Revoke(id) {
+	if !api.sharesFor(r).Revoke(id) {
 		httpx.WriteError(w, r, http.StatusNotFound, "SHARE_LINK_NOT_FOUND", "未找到可撤销的分享链接")
 		return
 	}
 	httpx.WriteData(w, r, http.StatusOK, map[string]any{"id": id, "revoked": true})
+}
+
+func (api *routeAPI) clearInactiveShareLinks(w http.ResponseWriter, r *http.Request) {
+	deleted, err := api.sharesFor(r).ClearInactive()
+	if err != nil {
+		httpx.WriteError(w, r, http.StatusInternalServerError, "SHARE_STORAGE_ERROR", "清理失效分享记录失败")
+		return
+	}
+	httpx.WriteData(w, r, http.StatusOK, map[string]any{"cleared": true, "deleted": deleted})
 }
 
 func (api *routeAPI) updateAlias(w http.ResponseWriter, r *http.Request) {
@@ -470,7 +531,7 @@ func (api *routeAPI) updateAlias(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, http.StatusBadRequest, "BAD_REQUEST", "label is required")
 		return
 	}
-	result, err := api.session.UpdateAlias(r.Context(), id, payload.Label, payload.Note)
+	result, err := api.sessionFor(r).UpdateAlias(r.Context(), id, payload.Label, payload.Note)
 	if err != nil {
 		api.writeMailError(w, r, err)
 		return
@@ -479,7 +540,7 @@ func (api *routeAPI) updateAlias(w http.ResponseWriter, r *http.Request) {
 }
 
 func (api *routeAPI) aliasQueueStatus(w http.ResponseWriter, r *http.Request) {
-	httpx.WriteData(w, r, http.StatusOK, api.queue.Status())
+	httpx.WriteData(w, r, http.StatusOK, api.queueFor(r).Status())
 }
 
 func (api *routeAPI) aliasQueueEnqueue(w http.ResponseWriter, r *http.Request) {
@@ -493,7 +554,7 @@ func (api *routeAPI) aliasQueueEnqueue(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, http.StatusBadRequest, "BAD_REQUEST", err.Error())
 		return
 	}
-	result, err := api.queue.Enqueue(r.Context(), payload.BaseLabel, payload.Count, payload.Note, payload.RequestID)
+	result, err := api.queueFor(r).Enqueue(r.Context(), payload.BaseLabel, payload.Count, payload.Note, payload.RequestID)
 	if err != nil {
 		api.writeQueueError(w, r, err)
 		return
@@ -523,11 +584,11 @@ func (api *routeAPI) queueControl(w http.ResponseWriter, r *http.Request, action
 	var err error
 	switch action {
 	case "pause":
-		result, err = api.queue.Pause(payload.JobID)
+		result, err = api.queueFor(r).Pause(payload.JobID)
 	case "resume":
-		result, err = api.queue.Resume(payload.JobID, payload.ConfirmUncertain)
+		result, err = api.queueFor(r).Resume(payload.JobID, payload.ConfirmUncertain)
 	case "cancel":
-		result, err = api.queue.Cancel(payload.JobID)
+		result, err = api.queueFor(r).Cancel(payload.JobID)
 	}
 	if err != nil {
 		api.writeQueueError(w, r, err)
@@ -550,7 +611,7 @@ func (api *routeAPI) writeQueueError(w http.ResponseWriter, r *http.Request, err
 }
 
 func (api *routeAPI) listAliases(w http.ResponseWriter, r *http.Request) {
-	aliases, source, err := api.session.listAliases(r.Context())
+	aliases, source, err := api.sessionFor(r).listAliases(r.Context())
 	if err != nil {
 		api.writeMailError(w, r, err)
 		return
@@ -560,7 +621,7 @@ func (api *routeAPI) listAliases(w http.ResponseWriter, r *http.Request) {
 }
 
 func (api *routeAPI) createAlias(w http.ResponseWriter, r *http.Request) {
-	if api.queue.Active() || api.creation.Running() {
+	if api.queueFor(r).Active() || api.creationFor(r).Running() {
 		httpx.WriteError(w, r, http.StatusConflict, "CREATE_IN_PROGRESS", "后台创建任务正在执行，请稍后再试")
 		return
 	}
@@ -577,9 +638,9 @@ func (api *routeAPI) createAlias(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, http.StatusBadRequest, "BAD_REQUEST", "label is required")
 		return
 	}
-	api.createGate.Lock()
-	alias, err := api.session.CreateAlias(r.Context(), payload.Label, payload.Note)
-	api.createGate.Unlock()
+	api.createGateFor(r).Lock()
+	alias, err := api.sessionFor(r).CreateAlias(r.Context(), payload.Label, payload.Note)
+	api.createGateFor(r).Unlock()
 	if err != nil {
 		api.writeMailError(w, r, err)
 		return
@@ -610,7 +671,7 @@ func (api *routeAPI) exportAliasesCSV(w http.ResponseWriter, r *http.Request) {
 }
 
 func (api *routeAPI) aliasesCSV(r *http.Request) (string, error) {
-	aliases, err := api.session.ListAliases(r.Context())
+	aliases, err := api.sessionFor(r).ListAliases(r.Context())
 	if err != nil {
 		return "", err
 	}
@@ -628,7 +689,7 @@ func (api *routeAPI) aliasAction(active, deleteAlias bool) http.HandlerFunc {
 		// deleted record in a subsequent list response.
 		var aliasAddress string
 		if deleteAlias || !active {
-			if aliases, listErr := api.session.ListAliases(r.Context()); listErr == nil {
+			if aliases, listErr := api.sessionFor(r).ListAliases(r.Context()); listErr == nil {
 				for _, alias := range aliases {
 					if fmt.Sprint(alias["anonymousId"]) == id {
 						aliasAddress = fmt.Sprint(alias["hme"])
@@ -639,27 +700,27 @@ func (api *routeAPI) aliasAction(active, deleteAlias bool) http.HandlerFunc {
 		}
 		var result map[string]any
 		if deleteAlias {
-			result, err = api.session.DeleteAlias(r.Context(), id)
+			result, err = api.sessionFor(r).DeleteAlias(r.Context(), id)
 		} else {
-			result, err = api.session.SetAliasActive(r.Context(), id, active)
+			result, err = api.sessionFor(r).SetAliasActive(r.Context(), id, active)
 		}
 		if err != nil {
 			api.writeMailError(w, r, err)
 			return
 		}
 		if aliasAddress != "" && (deleteAlias || !active) {
-			_ = api.shares.RevokeForAlias(aliasAddress)
+			_ = api.sharesFor(r).RevokeForAlias(aliasAddress)
 		}
 		httpx.WriteData(w, r, http.StatusOK, result)
 	}
 }
 
 func (api *routeAPI) sessionStatus(w http.ResponseWriter, r *http.Request) {
-	httpx.WriteData(w, r, http.StatusOK, api.session.Status())
+	httpx.WriteData(w, r, http.StatusOK, api.sessionFor(r).Status())
 }
 
 func (api *routeAPI) sessionRefresh(w http.ResponseWriter, r *http.Request) {
-	httpx.WriteData(w, r, http.StatusOK, api.session.Check(r.Context()))
+	httpx.WriteData(w, r, http.StatusOK, api.sessionFor(r).Check(r.Context()))
 }
 
 func (api *routeAPI) sessionImport(w http.ResponseWriter, r *http.Request) {
@@ -671,21 +732,24 @@ func (api *routeAPI) sessionImport(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, http.StatusBadRequest, "BAD_REQUEST", err.Error())
 		return
 	}
-	if api.queue != nil && api.queue.Active() {
+	if api.queueFor(r) != nil && api.queueFor(r).Active() {
 		incoming, parseErr := ParseImportText(payload.CurlText, payload.Region)
 		if parseErr != nil {
 			httpx.WriteError(w, r, http.StatusBadRequest, "BAD_REQUEST", parseErr.Error())
 			return
 		}
-		if expected := api.queue.AccountDSID(); expected != "" && incoming.DSID != expected {
+		if expected := api.queueFor(r).AccountDSID(); expected != "" && incoming.DSID != expected {
 			httpx.WriteError(w, r, http.StatusConflict, "QUEUE_ACCOUNT_MISMATCH", "当前批量队列绑定了另一个 iCloud 账号，请完成或取消队列后再切换 Session")
 			return
 		}
 	}
-	result, err := api.session.Import(payload.CurlText, payload.Region)
+	result, err := api.sessionFor(r).Import(payload.CurlText, payload.Region)
 	if err != nil {
 		httpx.WriteError(w, r, http.StatusBadRequest, "BAD_REQUEST", err.Error())
 		return
+	}
+	if config, loadErr := api.sessionFor(r).Client(); loadErr == nil && api.module != nil {
+		api.module.updateAccountIdentity(api.runtimeFor(r).account.ID, &config.config, "")
 	}
 	httpx.WriteData(w, r, http.StatusOK, result)
 }
@@ -697,13 +761,16 @@ func (api *routeAPI) appleLoginStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	expectedDSID := ""
-	if api.queue.Active() {
-		expectedDSID = api.queue.AccountDSID()
+	if api.queueFor(r).Active() {
+		expectedDSID = api.queueFor(r).AccountDSID()
 	}
-	result, err := api.session.StartAppleLogin(r.Context(), payload, expectedDSID)
+	result, err := api.sessionFor(r).StartAppleLogin(r.Context(), payload, expectedDSID)
 	if err != nil {
 		api.writeAppleLoginError(w, r, err)
 		return
+	}
+	if !result.Needs2FA && api.module != nil {
+		api.module.updateAccountIdentity(api.runtimeFor(r).account.ID, result.webConfig, result.AppleID)
 	}
 	httpx.WriteData(w, r, http.StatusOK, result)
 }
@@ -718,13 +785,16 @@ func (api *routeAPI) appleLoginVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	expectedDSID := ""
-	if api.queue != nil && api.queue.Active() && api.session.PendingAppleLoginChannel(payload.PendingID) == AppleChannelICloudWeb {
-		expectedDSID = api.queue.AccountDSID()
+	if api.queueFor(r) != nil && api.queueFor(r).Active() && api.sessionFor(r).PendingAppleLoginChannel(payload.PendingID) == AppleChannelICloudWeb {
+		expectedDSID = api.queueFor(r).AccountDSID()
 	}
-	result, err := api.session.VerifyAppleLogin(r.Context(), payload.PendingID, payload.Code, expectedDSID)
+	result, err := api.sessionFor(r).VerifyAppleLogin(r.Context(), payload.PendingID, payload.Code, expectedDSID)
 	if err != nil {
 		api.writeAppleLoginError(w, r, err)
 		return
+	}
+	if api.module != nil {
+		api.module.updateAccountIdentity(api.runtimeFor(r).account.ID, result.webConfig, result.AppleID)
 	}
 	httpx.WriteData(w, r, http.StatusOK, result)
 }
@@ -743,7 +813,7 @@ func (api *routeAPI) writeAppleLoginError(w http.ResponseWriter, r *http.Request
 }
 
 func (api *routeAPI) autoRefreshStatus(w http.ResponseWriter, r *http.Request) {
-	httpx.WriteData(w, r, http.StatusOK, api.refresh.Status())
+	httpx.WriteData(w, r, http.StatusOK, api.refreshFor(r).Status())
 }
 
 func (api *routeAPI) autoRefreshUpdate(w http.ResponseWriter, r *http.Request) {
@@ -755,7 +825,7 @@ func (api *routeAPI) autoRefreshUpdate(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, http.StatusBadRequest, "BAD_REQUEST", err.Error())
 		return
 	}
-	result, err := api.refresh.Update(payload.Enabled, payload.IntervalSeconds)
+	result, err := api.refreshFor(r).Update(payload.Enabled, payload.IntervalSeconds)
 	if err != nil {
 		httpx.WriteError(w, r, http.StatusInternalServerError, "STORAGE_ERROR", err.Error())
 		return
@@ -764,7 +834,7 @@ func (api *routeAPI) autoRefreshUpdate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (api *routeAPI) autoRefreshRun(w http.ResponseWriter, r *http.Request) {
-	result, err := api.refresh.Run(r.Context())
+	result, err := api.refreshFor(r).Run(r.Context())
 	if err != nil {
 		httpx.WriteError(w, r, http.StatusInternalServerError, "STORAGE_ERROR", err.Error())
 		return
@@ -773,7 +843,7 @@ func (api *routeAPI) autoRefreshRun(w http.ResponseWriter, r *http.Request) {
 }
 
 func (api *routeAPI) createScheduleStatus(w http.ResponseWriter, r *http.Request) {
-	httpx.WriteData(w, r, http.StatusOK, api.creation.Status())
+	httpx.WriteData(w, r, http.StatusOK, api.creationFor(r).Status())
 }
 
 func (api *routeAPI) createScheduleUpdate(w http.ResponseWriter, r *http.Request) {
@@ -789,7 +859,7 @@ func (api *routeAPI) createScheduleUpdate(w http.ResponseWriter, r *http.Request
 		httpx.WriteError(w, r, http.StatusBadRequest, "BAD_REQUEST", err.Error())
 		return
 	}
-	result, err := api.creation.Update(payload.Enabled, payload.BatchSize, payload.AliasIntervalSeconds, payload.IntervalSeconds, payload.Label, payload.Note)
+	result, err := api.creationFor(r).Update(payload.Enabled, payload.BatchSize, payload.AliasIntervalSeconds, payload.IntervalSeconds, payload.Label, payload.Note)
 	if err != nil {
 		httpx.WriteError(w, r, http.StatusInternalServerError, "STORAGE_ERROR", err.Error())
 		return
@@ -798,7 +868,7 @@ func (api *routeAPI) createScheduleUpdate(w http.ResponseWriter, r *http.Request
 }
 
 func (api *routeAPI) createScheduleRun(w http.ResponseWriter, r *http.Request) {
-	if err := api.creation.RunNow(); err != nil {
+	if err := api.creationFor(r).RunNow(); err != nil {
 		if errors.Is(err, ErrCreateInProgress) {
 			httpx.WriteError(w, r, http.StatusConflict, "CREATE_IN_PROGRESS", err.Error())
 			return
@@ -806,11 +876,11 @@ func (api *routeAPI) createScheduleRun(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteError(w, r, http.StatusInternalServerError, "CREATE_FAILED", err.Error())
 		return
 	}
-	httpx.WriteData(w, r, http.StatusAccepted, api.creation.Status())
+	httpx.WriteData(w, r, http.StatusAccepted, api.creationFor(r).Status())
 }
 
 func (api *routeAPI) createScheduleStop(w http.ResponseWriter, r *http.Request) {
-	result, err := api.creation.Stop()
+	result, err := api.creationFor(r).Stop()
 	if err != nil {
 		httpx.WriteError(w, r, http.StatusInternalServerError, "STORAGE_ERROR", err.Error())
 		return

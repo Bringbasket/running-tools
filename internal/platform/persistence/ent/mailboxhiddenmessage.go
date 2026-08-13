@@ -16,6 +16,8 @@ type MailboxHiddenMessage struct {
 	config `json:"-"`
 	// ID of the ent.
 	ID int `json:"id,omitempty"`
+	// AccountID holds the value of the "account_id" field.
+	AccountID string `json:"account_id,omitempty"`
 	// Generation holds the value of the "generation" field.
 	Generation string `json:"generation,omitempty"`
 	// Alias holds the value of the "alias" field.
@@ -32,7 +34,7 @@ func (*MailboxHiddenMessage) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case mailboxhiddenmessage.FieldID, mailboxhiddenmessage.FieldUID:
 			values[i] = new(sql.NullInt64)
-		case mailboxhiddenmessage.FieldGeneration, mailboxhiddenmessage.FieldAlias:
+		case mailboxhiddenmessage.FieldAccountID, mailboxhiddenmessage.FieldGeneration, mailboxhiddenmessage.FieldAlias:
 			values[i] = new(sql.NullString)
 		default:
 			values[i] = new(sql.UnknownType)
@@ -55,6 +57,12 @@ func (_m *MailboxHiddenMessage) assignValues(columns []string, values []any) err
 				return fmt.Errorf("unexpected type %T for field id", value)
 			}
 			_m.ID = int(value.Int64)
+		case mailboxhiddenmessage.FieldAccountID:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field account_id", values[i])
+			} else if value.Valid {
+				_m.AccountID = value.String
+			}
 		case mailboxhiddenmessage.FieldGeneration:
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field generation", values[i])
@@ -109,6 +117,9 @@ func (_m *MailboxHiddenMessage) String() string {
 	var builder strings.Builder
 	builder.WriteString("MailboxHiddenMessage(")
 	builder.WriteString(fmt.Sprintf("id=%v, ", _m.ID))
+	builder.WriteString("account_id=")
+	builder.WriteString(_m.AccountID)
+	builder.WriteString(", ")
 	builder.WriteString("generation=")
 	builder.WriteString(_m.Generation)
 	builder.WriteString(", ")

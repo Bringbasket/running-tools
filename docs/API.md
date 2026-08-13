@@ -43,8 +43,19 @@ JSON 接口统一使用以下响应结构：
 
 ## 邮件接口
 
+邮件模块支持多个 iCloud 账号。除账号列表和创建账号外，标准邮件接口必须携带当前账号：
+
+```http
+X-Mail-Account-ID: default
+```
+
+未提供时兼容使用 `default`。前端切换账号后会在所有邮件请求中自动设置该请求头；每个账号拥有
+独立 Session、邮箱列表、自动刷新、自动创建、批量队列、IMAP 缓存、分享链接和使用日志。
+
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
+| GET | `/api/mail/v1/accounts` | 获取邮件账号列表 |
+| POST | `/api/mail/v1/accounts` | 新建独立邮件账号运行空间 |
 | GET | `/api/mail/v1/aliases` | 获取隐藏邮箱列表 |
 | POST | `/api/mail/v1/aliases` | 创建隐藏邮箱 |
 | GET | `/api/mail/v1/aliases/export.csv` | 直接下载 CSV 文件 |
@@ -63,11 +74,13 @@ JSON 接口统一使用以下响应结构：
 | POST | `/api/mail/v1/create-schedule` | 修改自动创建计划 |
 | POST | `/api/mail/v1/create-schedule/run` | 立即执行一轮创建 |
 | POST | `/api/mail/v1/create-schedule/stop` | 暂停当前计划和执行 |
+| GET | `/api/mail/v1/activity-logs` | 分页查询邮件系统使用日志 |
 | POST | `/api/mail/v1/aliases/{id}/update` | 修改标签和备注 |
 | GET/POST | `/api/mail/v1/alias-queue` | 查看或创建持久化批量队列 |
 | POST | `/api/mail/v1/alias-queue/{pause,resume,cancel}` | 控制批量队列 |
 | GET/POST | `/api/mail/v1/aliases/{id}/share-links` | 管理只读分享链接 |
 | POST | `/api/mail/v1/share-links/{id}/revoke` | 撤销分享链接 |
+| POST | `/api/mail/v1/share-links/clear-inactive` | 永久清理当前账号失效分享记录 |
 | GET | `/api/mail/v1/mail/messages?alias=...` | 读取指定隐藏邮箱的邮件缓存 |
 | GET/POST | `/api/mail/v1/mail/sync/{status,run}` | 查看状态或立即同步 IMAP |
 | GET/PUT | `/api/mail/v1/mail/settings` | 读取或保存 IMAP 设置，密码不回显 |
@@ -76,7 +89,28 @@ JSON 接口统一使用以下响应结构：
 | GET | `/api/mail/v1/mail/messages/{uid}?alias=...` | 单封邮件详情与代码识别 |
 | POST | `/api/mail/v1/mail/messages/{uid}/hide` | 从本地缓存隐藏邮件 |
 | POST | `/api/mail/v1/mail/messages/hide-batch` | 批量从本地缓存隐藏邮件 |
+| POST | `/api/mail/v1/mail/messages/clear` | 永久清理当前账号的 SQL 邮件缓存 |
 | GET | `/api/mail/v1/mail/sync/wait` | 等待缓存 revision 变化 |
+
+### 邮件系统使用日志
+
+```http
+GET /api/mail/v1/activity-logs?page=1&pageSize=10&search=&level=&category=&source=&start=&end=
+```
+
+`pageSize` 可选 `10`、`20`、`50` 或 `100`，默认 `10`；`level` 可选 `info`、`warning`、`error`；
+`category` 可选 `alias`、`session`、`mailbox`、`automation`；`source` 可选 `user`、
+`background`、`system`。`start` 和 `end` 使用 RFC3339。接口由服务端固定查询 `mail` 模块，
+不接受模块参数。返回 `items`、`total`、分页信息以及今日、24 小时失败、24 小时后台任务统计。
+
+日志查询本身、状态轮询和长轮询不会写入日志。字段与脱敏要求见 [`LOGGING.md`](LOGGING.md)。
+
+`POST /api/mail/v1/activity-logs/clear` 会永久删除邮件系统日志表中当前账号的记录，
+不会只隐藏前端数据。该操作需要 API Key 鉴权且前端必须二次确认。
+
+失败或警告日志的 `detail` 保存经过脱敏和截断的业务错误响应，不记录 Cookie、密码、API Key、
+邮件正文或验证码。`mail/messages/clear`、`activity-logs/clear` 和 `share-links/clear-inactive`
+均直接执行 PostgreSQL `DELETE`，不是前端过滤。
 
 ### 创建邮箱
 
@@ -164,7 +198,7 @@ Apple Account 登录态。新接口在生成候选地址前失败时可以回退
 请求一旦开始，结果可能已经生效，此时不会自动回退，避免重复创建。
 
 Apple Account 管理态过期或首次返回认证失效时，服务会在确认创建之前自动刷新并安全重试
-一次。两个通道的失败和冷却状态保存在 `data/mail/state/create-channels.json`；某通道冷却
+一次。两个通道的失败和冷却状态按账号保存在 PostgreSQL；某通道冷却
 期间自动跳过该通道。Apple 返回 `retryAfter` 时按其指定时间冷却，否则限额使用 2 分钟、
 其他暂时错误使用 30 秒。
 
@@ -199,15 +233,15 @@ Apple Account 管理态过期或首次返回认证失效时，服务会在确认
 
 ### IMAP 收件箱
 
-收件箱可以在前端“IMAP 设置”中配置，也兼容服务器环境变量作为首次默认值。设置保存到
-`data/mail/state/mailbox-config.json`，文件权限为 `0600`；密码只接受写入，读取接口仅返回
+收件箱可以在前端“IMAP 设置”中配置，也兼容服务器环境变量作为首次默认值。设置按账号保存到
+PostgreSQL；密码只接受写入，读取接口仅返回
 `passwordConfigured`，不会返回密码正文。
 
 ```json
 {
-  "username": "mail@example.com",
+  "username": "your-name@icloud.com",
   "password": "应用专用密码；留空表示保留原密码",
-  "host": "imap.gmail.com",
+  "host": "imap.mail.me.com",
   "port": 993,
   "mailbox": "INBOX",
   "enabled": true,
@@ -216,6 +250,10 @@ Apple Account 管理态过期或首次返回认证失效时，服务会在确认
   "cacheMax": 5000
 }
 ```
+
+iCloud Mail 固定使用 `imap.mail.me.com:993`，密码必须是在 Apple Account 安全设置中生成的
+App 专用密码，不能使用 Apple ID 登录密码。前端会按常见邮箱域名推荐服务器，但仍允许填写
+其他合法的自定义 IMAP 主机。
 
 所有连接固定使用 TLS，并以只读模式选择邮箱。首次同步按配置的回看天数读取，之后使用持久
 UID 游标增量同步；单批最多 200 封，积压批次会继续推进。Worker 优先使用 IMAP IDLE，

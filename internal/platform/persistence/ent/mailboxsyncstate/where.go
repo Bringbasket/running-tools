@@ -52,6 +52,11 @@ func IDLTE(id int) predicate.MailboxSyncState {
 	return predicate.MailboxSyncState(sql.FieldLTE(FieldID, id))
 }
 
+// AccountID applies equality check predicate on the "account_id" field. It's identical to AccountIDEQ.
+func AccountID(v string) predicate.MailboxSyncState {
+	return predicate.MailboxSyncState(sql.FieldEQ(FieldAccountID, v))
+}
+
 // Key applies equality check predicate on the "key" field. It's identical to KeyEQ.
 func Key(v string) predicate.MailboxSyncState {
 	return predicate.MailboxSyncState(sql.FieldEQ(FieldKey, v))
@@ -60,6 +65,71 @@ func Key(v string) predicate.MailboxSyncState {
 // HighestUID applies equality check predicate on the "highest_uid" field. It's identical to HighestUIDEQ.
 func HighestUID(v uint64) predicate.MailboxSyncState {
 	return predicate.MailboxSyncState(sql.FieldEQ(FieldHighestUID, v))
+}
+
+// AccountIDEQ applies the EQ predicate on the "account_id" field.
+func AccountIDEQ(v string) predicate.MailboxSyncState {
+	return predicate.MailboxSyncState(sql.FieldEQ(FieldAccountID, v))
+}
+
+// AccountIDNEQ applies the NEQ predicate on the "account_id" field.
+func AccountIDNEQ(v string) predicate.MailboxSyncState {
+	return predicate.MailboxSyncState(sql.FieldNEQ(FieldAccountID, v))
+}
+
+// AccountIDIn applies the In predicate on the "account_id" field.
+func AccountIDIn(vs ...string) predicate.MailboxSyncState {
+	return predicate.MailboxSyncState(sql.FieldIn(FieldAccountID, vs...))
+}
+
+// AccountIDNotIn applies the NotIn predicate on the "account_id" field.
+func AccountIDNotIn(vs ...string) predicate.MailboxSyncState {
+	return predicate.MailboxSyncState(sql.FieldNotIn(FieldAccountID, vs...))
+}
+
+// AccountIDGT applies the GT predicate on the "account_id" field.
+func AccountIDGT(v string) predicate.MailboxSyncState {
+	return predicate.MailboxSyncState(sql.FieldGT(FieldAccountID, v))
+}
+
+// AccountIDGTE applies the GTE predicate on the "account_id" field.
+func AccountIDGTE(v string) predicate.MailboxSyncState {
+	return predicate.MailboxSyncState(sql.FieldGTE(FieldAccountID, v))
+}
+
+// AccountIDLT applies the LT predicate on the "account_id" field.
+func AccountIDLT(v string) predicate.MailboxSyncState {
+	return predicate.MailboxSyncState(sql.FieldLT(FieldAccountID, v))
+}
+
+// AccountIDLTE applies the LTE predicate on the "account_id" field.
+func AccountIDLTE(v string) predicate.MailboxSyncState {
+	return predicate.MailboxSyncState(sql.FieldLTE(FieldAccountID, v))
+}
+
+// AccountIDContains applies the Contains predicate on the "account_id" field.
+func AccountIDContains(v string) predicate.MailboxSyncState {
+	return predicate.MailboxSyncState(sql.FieldContains(FieldAccountID, v))
+}
+
+// AccountIDHasPrefix applies the HasPrefix predicate on the "account_id" field.
+func AccountIDHasPrefix(v string) predicate.MailboxSyncState {
+	return predicate.MailboxSyncState(sql.FieldHasPrefix(FieldAccountID, v))
+}
+
+// AccountIDHasSuffix applies the HasSuffix predicate on the "account_id" field.
+func AccountIDHasSuffix(v string) predicate.MailboxSyncState {
+	return predicate.MailboxSyncState(sql.FieldHasSuffix(FieldAccountID, v))
+}
+
+// AccountIDEqualFold applies the EqualFold predicate on the "account_id" field.
+func AccountIDEqualFold(v string) predicate.MailboxSyncState {
+	return predicate.MailboxSyncState(sql.FieldEqualFold(FieldAccountID, v))
+}
+
+// AccountIDContainsFold applies the ContainsFold predicate on the "account_id" field.
+func AccountIDContainsFold(v string) predicate.MailboxSyncState {
+	return predicate.MailboxSyncState(sql.FieldContainsFold(FieldAccountID, v))
 }
 
 // KeyEQ applies the EQ predicate on the "key" field.

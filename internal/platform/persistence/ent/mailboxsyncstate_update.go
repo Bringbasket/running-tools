@@ -28,6 +28,20 @@ func (_u *MailboxSyncStateUpdate) Where(ps ...predicate.MailboxSyncState) *Mailb
 	return _u
 }
 
+// SetAccountID sets the "account_id" field.
+func (_u *MailboxSyncStateUpdate) SetAccountID(v string) *MailboxSyncStateUpdate {
+	_u.mutation.SetAccountID(v)
+	return _u
+}
+
+// SetNillableAccountID sets the "account_id" field if the given value is not nil.
+func (_u *MailboxSyncStateUpdate) SetNillableAccountID(v *string) *MailboxSyncStateUpdate {
+	if v != nil {
+		_u.SetAccountID(*v)
+	}
+	return _u
+}
+
 // SetKey sets the "key" field.
 func (_u *MailboxSyncStateUpdate) SetKey(v string) *MailboxSyncStateUpdate {
 	_u.mutation.SetKey(v)
@@ -115,6 +129,11 @@ func (_u *MailboxSyncStateUpdate) ExecX(ctx context.Context) {
 
 // check runs all checks and user-defined validators on the builder.
 func (_u *MailboxSyncStateUpdate) check() error {
+	if v, ok := _u.mutation.AccountID(); ok {
+		if err := mailboxsyncstate.AccountIDValidator(v); err != nil {
+			return &ValidationError{Name: "account_id", err: fmt.Errorf(`ent: validator failed for field "MailboxSyncState.account_id": %w`, err)}
+		}
+	}
 	if v, ok := _u.mutation.Key(); ok {
 		if err := mailboxsyncstate.KeyValidator(v); err != nil {
 			return &ValidationError{Name: "key", err: fmt.Errorf(`ent: validator failed for field "MailboxSyncState.key": %w`, err)}
@@ -134,6 +153,9 @@ func (_u *MailboxSyncStateUpdate) sqlSave(ctx context.Context) (_node int, err e
 				ps[i](selector)
 			}
 		}
+	}
+	if value, ok := _u.mutation.AccountID(); ok {
+		_spec.SetField(mailboxsyncstate.FieldAccountID, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.Key(); ok {
 		_spec.SetField(mailboxsyncstate.FieldKey, field.TypeString, value)
@@ -173,6 +195,20 @@ type MailboxSyncStateUpdateOne struct {
 	fields   []string
 	hooks    []Hook
 	mutation *MailboxSyncStateMutation
+}
+
+// SetAccountID sets the "account_id" field.
+func (_u *MailboxSyncStateUpdateOne) SetAccountID(v string) *MailboxSyncStateUpdateOne {
+	_u.mutation.SetAccountID(v)
+	return _u
+}
+
+// SetNillableAccountID sets the "account_id" field if the given value is not nil.
+func (_u *MailboxSyncStateUpdateOne) SetNillableAccountID(v *string) *MailboxSyncStateUpdateOne {
+	if v != nil {
+		_u.SetAccountID(*v)
+	}
+	return _u
 }
 
 // SetKey sets the "key" field.
@@ -275,6 +311,11 @@ func (_u *MailboxSyncStateUpdateOne) ExecX(ctx context.Context) {
 
 // check runs all checks and user-defined validators on the builder.
 func (_u *MailboxSyncStateUpdateOne) check() error {
+	if v, ok := _u.mutation.AccountID(); ok {
+		if err := mailboxsyncstate.AccountIDValidator(v); err != nil {
+			return &ValidationError{Name: "account_id", err: fmt.Errorf(`ent: validator failed for field "MailboxSyncState.account_id": %w`, err)}
+		}
+	}
 	if v, ok := _u.mutation.Key(); ok {
 		if err := mailboxsyncstate.KeyValidator(v); err != nil {
 			return &ValidationError{Name: "key", err: fmt.Errorf(`ent: validator failed for field "MailboxSyncState.key": %w`, err)}
@@ -311,6 +352,9 @@ func (_u *MailboxSyncStateUpdateOne) sqlSave(ctx context.Context) (_node *Mailbo
 				ps[i](selector)
 			}
 		}
+	}
+	if value, ok := _u.mutation.AccountID(); ok {
+		_spec.SetField(mailboxsyncstate.FieldAccountID, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.Key(); ok {
 		_spec.SetField(mailboxsyncstate.FieldKey, field.TypeString, value)

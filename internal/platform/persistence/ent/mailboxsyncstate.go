@@ -17,6 +17,8 @@ type MailboxSyncState struct {
 	config `json:"-"`
 	// ID of the ent.
 	ID int `json:"id,omitempty"`
+	// AccountID holds the value of the "account_id" field.
+	AccountID string `json:"account_id,omitempty"`
 	// Key holds the value of the "key" field.
 	Key string `json:"key,omitempty"`
 	// Status holds the value of the "status" field.
@@ -37,7 +39,7 @@ func (*MailboxSyncState) scanValues(columns []string) ([]any, error) {
 			values[i] = new([]byte)
 		case mailboxsyncstate.FieldID, mailboxsyncstate.FieldHighestUID:
 			values[i] = new(sql.NullInt64)
-		case mailboxsyncstate.FieldKey:
+		case mailboxsyncstate.FieldAccountID, mailboxsyncstate.FieldKey:
 			values[i] = new(sql.NullString)
 		default:
 			values[i] = new(sql.UnknownType)
@@ -60,6 +62,12 @@ func (_m *MailboxSyncState) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field id", value)
 			}
 			_m.ID = int(value.Int64)
+		case mailboxsyncstate.FieldAccountID:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field account_id", values[i])
+			} else if value.Valid {
+				_m.AccountID = value.String
+			}
 		case mailboxsyncstate.FieldKey:
 			if value, ok := values[i].(*sql.NullString); !ok {
 				return fmt.Errorf("unexpected type %T for field key", values[i])
@@ -124,6 +132,9 @@ func (_m *MailboxSyncState) String() string {
 	var builder strings.Builder
 	builder.WriteString("MailboxSyncState(")
 	builder.WriteString(fmt.Sprintf("id=%v, ", _m.ID))
+	builder.WriteString("account_id=")
+	builder.WriteString(_m.AccountID)
+	builder.WriteString(", ")
 	builder.WriteString("key=")
 	builder.WriteString(_m.Key)
 	builder.WriteString(", ")

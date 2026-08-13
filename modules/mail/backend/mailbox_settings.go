@@ -159,7 +159,7 @@ func mailboxConfigFromEnv() mailboxConfig {
 
 func withMailboxDefaults(cfg mailboxConfig) mailboxConfig {
 	if cfg.Host == "" {
-		cfg.Host = "imap.gmail.com"
+		cfg.Host = "imap.mail.me.com"
 	}
 	if cfg.Port < 1 || cfg.Port > 65535 {
 		cfg.Port = 993
@@ -198,6 +198,9 @@ func normalizeMailboxSettings(input MailboxSettingsInput, current mailboxConfig)
 	}
 	if err := validateIMAPHost(host); err != nil {
 		return mailboxConfig{}, mailboxStoredConfig{}, err
+	}
+	if isICloudMailbox(username) && isLegacyICloudIMAPHost(host) {
+		host = "imap.mail.me.com"
 	}
 	if input.Port < 1 || input.Port > 65535 {
 		return mailboxConfig{}, mailboxStoredConfig{}, fmt.Errorf("%w: IMAP 端口必须在 1 到 65535 之间", ErrInvalidMailboxSettings)
@@ -267,13 +270,35 @@ func testIMAPConnection(cfg mailboxConfig) error {
 	}
 	defer client.Close()
 	if err := client.Login(cfg.Username, cfg.Password).Wait(); err != nil {
-		return fmt.Errorf("IMAP 身份验证失败: %w", err)
+		return imapLoginError(cfg, err)
 	}
-	defer client.Logout().Wait()
+	defer logoutIMAP(client)
 	if _, err := client.Select(cfg.Mailbox, &imap.SelectOptions{ReadOnly: true}).Wait(); err != nil {
 		return fmt.Errorf("IMAP 邮箱选择失败: %w", err)
 	}
 	return nil
+}
+
+func isICloudMailbox(username string) bool {
+	address := strings.ToLower(strings.TrimSpace(username))
+	return strings.HasSuffix(address, "@icloud.com") ||
+		strings.HasSuffix(address, "@me.com") ||
+		strings.HasSuffix(address, "@mac.com")
+}
+
+func isLegacyICloudIMAPHost(host string) bool {
+	return strings.EqualFold(host, "imap.gmail.com") || strings.EqualFold(host, "imap.icloud.com")
+}
+
+func imapLoginError(cfg mailboxConfig, err error) error {
+	if isICloudMailbox(cfg.Username) || strings.EqualFold(cfg.Host, "imap.mail.me.com") {
+		return fmt.Errorf("IMAP 身份验证失败: 请确认服务器为 imap.mail.me.com:993，并使用 Apple Account 生成的 App 专用密码（不能使用 Apple ID 登录密码）: %w", err)
+	}
+	return fmt.Errorf("IMAP 身份验证失败: %w", err)
+}
+
+func logoutIMAP(client *imapclient.Client) {
+	_ = client.Logout().Wait()
 }
 
 func envInt(name string) int {

@@ -21,6 +21,20 @@ type MailboxMessageCreate struct {
 	conflict []sql.ConflictOption
 }
 
+// SetAccountID sets the "account_id" field.
+func (_c *MailboxMessageCreate) SetAccountID(v string) *MailboxMessageCreate {
+	_c.mutation.SetAccountID(v)
+	return _c
+}
+
+// SetNillableAccountID sets the "account_id" field if the given value is not nil.
+func (_c *MailboxMessageCreate) SetNillableAccountID(v *string) *MailboxMessageCreate {
+	if v != nil {
+		_c.SetAccountID(*v)
+	}
+	return _c
+}
+
 // SetGeneration sets the "generation" field.
 func (_c *MailboxMessageCreate) SetGeneration(v string) *MailboxMessageCreate {
 	_c.mutation.SetGeneration(v)
@@ -148,6 +162,10 @@ func (_c *MailboxMessageCreate) ExecX(ctx context.Context) {
 
 // defaults sets the default values of the builder before save.
 func (_c *MailboxMessageCreate) defaults() {
+	if _, ok := _c.mutation.AccountID(); !ok {
+		v := mailboxmessage.DefaultAccountID
+		_c.mutation.SetAccountID(v)
+	}
 	if _, ok := _c.mutation.Aliases(); !ok {
 		v := mailboxmessage.DefaultAliases
 		_c.mutation.SetAliases(v)
@@ -180,6 +198,14 @@ func (_c *MailboxMessageCreate) defaults() {
 
 // check runs all checks and user-defined validators on the builder.
 func (_c *MailboxMessageCreate) check() error {
+	if _, ok := _c.mutation.AccountID(); !ok {
+		return &ValidationError{Name: "account_id", err: errors.New(`ent: missing required field "MailboxMessage.account_id"`)}
+	}
+	if v, ok := _c.mutation.AccountID(); ok {
+		if err := mailboxmessage.AccountIDValidator(v); err != nil {
+			return &ValidationError{Name: "account_id", err: fmt.Errorf(`ent: validator failed for field "MailboxMessage.account_id": %w`, err)}
+		}
+	}
 	if _, ok := _c.mutation.Generation(); !ok {
 		return &ValidationError{Name: "generation", err: errors.New(`ent: missing required field "MailboxMessage.generation"`)}
 	}
@@ -252,6 +278,10 @@ func (_c *MailboxMessageCreate) createSpec() (*MailboxMessage, *sqlgraph.CreateS
 		_spec = sqlgraph.NewCreateSpec(mailboxmessage.Table, sqlgraph.NewFieldSpec(mailboxmessage.FieldID, field.TypeInt))
 	)
 	_spec.OnConflict = _c.conflict
+	if value, ok := _c.mutation.AccountID(); ok {
+		_spec.SetField(mailboxmessage.FieldAccountID, field.TypeString, value)
+		_node.AccountID = value
+	}
 	if value, ok := _c.mutation.Generation(); ok {
 		_spec.SetField(mailboxmessage.FieldGeneration, field.TypeString, value)
 		_node.Generation = value
@@ -299,7 +329,7 @@ func (_c *MailboxMessageCreate) createSpec() (*MailboxMessage, *sqlgraph.CreateS
 // of the `INSERT` statement. For example:
 //
 //	client.MailboxMessage.Create().
-//		SetGeneration(v).
+//		SetAccountID(v).
 //		OnConflict(
 //			// Update the row with the new values
 //			// the was proposed for insertion.
@@ -308,7 +338,7 @@ func (_c *MailboxMessageCreate) createSpec() (*MailboxMessage, *sqlgraph.CreateS
 //		// Override some of the fields with custom
 //		// update values.
 //		Update(func(u *ent.MailboxMessageUpsert) {
-//			SetGeneration(v+v).
+//			SetAccountID(v+v).
 //		}).
 //		Exec(ctx)
 func (_c *MailboxMessageCreate) OnConflict(opts ...sql.ConflictOption) *MailboxMessageUpsertOne {
@@ -343,6 +373,18 @@ type (
 		*sql.UpdateSet
 	}
 )
+
+// SetAccountID sets the "account_id" field.
+func (u *MailboxMessageUpsert) SetAccountID(v string) *MailboxMessageUpsert {
+	u.Set(mailboxmessage.FieldAccountID, v)
+	return u
+}
+
+// UpdateAccountID sets the "account_id" field to the value that was provided on create.
+func (u *MailboxMessageUpsert) UpdateAccountID() *MailboxMessageUpsert {
+	u.SetExcluded(mailboxmessage.FieldAccountID)
+	return u
+}
 
 // SetGeneration sets the "generation" field.
 func (u *MailboxMessageUpsert) SetGeneration(v string) *MailboxMessageUpsert {
@@ -514,6 +556,20 @@ func (u *MailboxMessageUpsertOne) Update(set func(*MailboxMessageUpsert)) *Mailb
 		set(&MailboxMessageUpsert{UpdateSet: update})
 	}))
 	return u
+}
+
+// SetAccountID sets the "account_id" field.
+func (u *MailboxMessageUpsertOne) SetAccountID(v string) *MailboxMessageUpsertOne {
+	return u.Update(func(s *MailboxMessageUpsert) {
+		s.SetAccountID(v)
+	})
+}
+
+// UpdateAccountID sets the "account_id" field to the value that was provided on create.
+func (u *MailboxMessageUpsertOne) UpdateAccountID() *MailboxMessageUpsertOne {
+	return u.Update(func(s *MailboxMessageUpsert) {
+		s.UpdateAccountID()
+	})
 }
 
 // SetGeneration sets the "generation" field.
@@ -805,7 +861,7 @@ func (_c *MailboxMessageCreateBulk) ExecX(ctx context.Context) {
 //		// Override some of the fields with custom
 //		// update values.
 //		Update(func(u *ent.MailboxMessageUpsert) {
-//			SetGeneration(v+v).
+//			SetAccountID(v+v).
 //		}).
 //		Exec(ctx)
 func (_c *MailboxMessageCreateBulk) OnConflict(opts ...sql.ConflictOption) *MailboxMessageUpsertBulk {
@@ -872,6 +928,20 @@ func (u *MailboxMessageUpsertBulk) Update(set func(*MailboxMessageUpsert)) *Mail
 		set(&MailboxMessageUpsert{UpdateSet: update})
 	}))
 	return u
+}
+
+// SetAccountID sets the "account_id" field.
+func (u *MailboxMessageUpsertBulk) SetAccountID(v string) *MailboxMessageUpsertBulk {
+	return u.Update(func(s *MailboxMessageUpsert) {
+		s.SetAccountID(v)
+	})
+}
+
+// UpdateAccountID sets the "account_id" field to the value that was provided on create.
+func (u *MailboxMessageUpsertBulk) UpdateAccountID() *MailboxMessageUpsertBulk {
+	return u.Update(func(s *MailboxMessageUpsert) {
+		s.UpdateAccountID()
+	})
 }
 
 // SetGeneration sets the "generation" field.

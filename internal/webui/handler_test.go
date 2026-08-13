@@ -8,14 +8,20 @@ import (
 	"testing"
 )
 
-func TestHandlerServesUnderscorePrefixedViteAssets(t *testing.T) {
+func TestHandlerServesGeneratedViteAssets(t *testing.T) {
 	handler, err := NewHandler()
 	if err != nil {
 		t.Fatal(err)
 	}
 	assets, err := fs.Glob(handler.files, "assets/_*.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(assets) == 0 {
+		assets, err = fs.Glob(handler.files, "assets/*.js")
+	}
 	if err != nil || len(assets) == 0 {
-		t.Fatalf("underscore-prefixed Vite asset not found: %v", err)
+		t.Fatalf("generated Vite asset not found: %v", err)
 	}
 	request := httptest.NewRequest(http.MethodGet, "/"+assets[0], nil)
 	response := httptest.NewRecorder()

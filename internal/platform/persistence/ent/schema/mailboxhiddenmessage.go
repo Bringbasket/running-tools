@@ -12,6 +12,7 @@ type MailboxHiddenMessage struct {
 
 func (MailboxHiddenMessage) Fields() []ent.Field {
 	return []ent.Field{
+		field.String("account_id").Default("default").MaxLen(64),
 		field.String("generation").NotEmpty().MaxLen(128),
 		field.String("alias").NotEmpty().MaxLen(320),
 		field.Uint64("uid"),
@@ -20,7 +21,7 @@ func (MailboxHiddenMessage) Fields() []ent.Field {
 
 func (MailboxHiddenMessage) Indexes() []ent.Index {
 	return []ent.Index{
-		index.Fields("generation", "alias", "uid").Unique(),
-		index.Fields("generation", "uid"),
+		index.Fields("account_id", "generation", "alias", "uid").Unique(),
+		index.Fields("account_id", "generation", "uid"),
 	}
 }

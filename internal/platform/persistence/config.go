@@ -31,7 +31,7 @@ type Config struct {
 }
 
 func LoadConfig() (Config, error) {
-	mode := StorageMode(strings.ToLower(env("RUNNING_STORAGE_MODE", string(StorageJSON))))
+	mode := StorageMode(strings.ToLower(env("RUNNING_STORAGE_MODE", string(StoragePostgres))))
 	if mode != StorageJSON && mode != StorageDual && mode != StoragePostgres {
 		return Config{}, fmt.Errorf("RUNNING_STORAGE_MODE must be json, dual, or postgres")
 	}

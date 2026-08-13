@@ -14,6 +14,41 @@ export interface MailAlias {
 	nextRetryAt?: number | null
 }
 
+export type ActivityLogLevel = 'info' | 'warning' | 'error'
+export type ActivityLogOutcome = 'success' | 'failure'
+export type ActivityLogSource = 'user' | 'background' | 'system'
+
+export interface ActivityLogEntry {
+  id: string
+  module: string
+  category: 'alias' | 'session' | 'mailbox' | 'automation' | string
+  action: string
+  level: ActivityLogLevel
+  outcome: ActivityLogOutcome
+  summary: string
+  source: ActivityLogSource
+  method?: string
+  path?: string
+  httpStatus?: number
+  durationMs: number
+  requestId?: string
+  detail?: string
+  metadata?: Record<string, string | number | boolean>
+  createdAt: string
+}
+
+export interface ActivityLogPage {
+  items: ActivityLogEntry[]
+  total: number
+  page: number
+  pageSize: number
+  stats: {
+    today: number
+    failures24h: number
+    background24h: number
+  }
+}
+
 export interface AliasQueueStatus {
   jobId: string
   requestId?: string

@@ -5,14 +5,12 @@ import AliasesPage from './AliasesPage.vue'
 const mocks = vi.hoisted(() => ({
   aliases: vi.fn(),
   createSchedule: vi.fn(),
-  aliasQueue: vi.fn(),
 }))
 
 vi.mock('../api', () => ({
   mailAPI: {
     aliases: mocks.aliases,
     createSchedule: mocks.createSchedule,
-    aliasQueue: mocks.aliasQueue,
   },
 }))
 
@@ -47,13 +45,14 @@ describe('邮箱列表分页', () => {
       label: 'shopping',
       note: '',
     })
-    mocks.aliasQueue.mockResolvedValue({ status: 'idle', requested: 0, success: 0, workerRunning: false })
-
     const wrapper = mount(AliasesPage)
     await flushPromises()
 
-    expect(wrapper.findAll('tbody tr')).toHaveLength(20)
-    expect(wrapper.get('.pagination-bar strong').text()).toBe('第 1 / 3 页')
+    expect(wrapper.find('.page-actions .primary').exists()).toBe(false)
+    expect(wrapper.findAll('.workspace-tabs button')).toHaveLength(2)
+    expect(wrapper.find('.workspace-tabs').text()).not.toContain('批量队列')
+    expect(wrapper.findAll('tbody tr')).toHaveLength(10)
+    expect(wrapper.get('.pagination-bar strong').text()).toBe('第 1 / 6 页')
 
     await wrapper.get('.page-size select').setValue('50')
     expect(wrapper.findAll('tbody tr')).toHaveLength(50)
@@ -82,16 +81,12 @@ describe('邮箱列表分页', () => {
       label: 'shopping',
       note: '',
     })
-    mocks.aliasQueue.mockResolvedValue({ status: 'idle', requested: 0, success: 0, workerRunning: false })
-
     const wrapper = mount(AliasesPage)
     await flushPromises()
     expect(mocks.createSchedule).toHaveBeenCalledTimes(1)
-    expect(mocks.aliasQueue).toHaveBeenCalledTimes(1)
 
     await vi.advanceTimersByTimeAsync(10_000)
     expect(mocks.createSchedule).toHaveBeenCalledTimes(1)
-    expect(mocks.aliasQueue).toHaveBeenCalledTimes(1)
 
     mocks.createSchedule.mockResolvedValue({
       enabled: true,
@@ -108,16 +103,13 @@ describe('邮箱列表分页', () => {
     await wrapper.findAll('.workspace-tabs button')[1].trigger('click')
     await flushPromises()
     expect(mocks.createSchedule).toHaveBeenCalledTimes(2)
-    expect(mocks.aliasQueue).toHaveBeenCalledTimes(1)
 
     await vi.advanceTimersByTimeAsync(2600)
     expect(mocks.createSchedule).toHaveBeenCalledTimes(3)
-    expect(mocks.aliasQueue).toHaveBeenCalledTimes(1)
 
     await wrapper.findAll('.workspace-tabs button')[0].trigger('click')
     await vi.advanceTimersByTimeAsync(10_000)
     expect(mocks.createSchedule).toHaveBeenCalledTimes(3)
-    expect(mocks.aliasQueue).toHaveBeenCalledTimes(1)
 
     wrapper.unmount()
   })

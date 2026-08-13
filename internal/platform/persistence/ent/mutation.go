@@ -7,9 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 
 	"entgo.io/ent"
 	"entgo.io/ent/dialect/sql"
+	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/activitylog"
 	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/mailboxhiddenmessage"
 	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/mailboxmessage"
 	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/mailboxsyncstate"
@@ -25,10 +27,1216 @@ const (
 	OpUpdateOne = ent.OpUpdateOne
 
 	// Node types.
+	TypeActivityLog          = "ActivityLog"
 	TypeMailboxHiddenMessage = "MailboxHiddenMessage"
 	TypeMailboxMessage       = "MailboxMessage"
 	TypeMailboxSyncState     = "MailboxSyncState"
 )
+
+// ActivityLogMutation represents an operation that mutates the ActivityLog nodes in the graph.
+type ActivityLogMutation struct {
+	config
+	op             Op
+	typ            string
+	id             *int
+	module         *string
+	account_id     *string
+	category       *string
+	action         *string
+	level          *string
+	outcome        *string
+	summary        *string
+	source         *string
+	method         *string
+	_path          *string
+	http_status    *int
+	addhttp_status *int
+	duration_ms    *int64
+	addduration_ms *int64
+	request_id     *string
+	detail         *string
+	metadata       *map[string]interface{}
+	created_at     *time.Time
+	clearedFields  map[string]struct{}
+	done           bool
+	oldValue       func(context.Context) (*ActivityLog, error)
+	predicates     []predicate.ActivityLog
+}
+
+var _ ent.Mutation = (*ActivityLogMutation)(nil)
+
+// activitylogOption allows management of the mutation configuration using functional options.
+type activitylogOption func(*ActivityLogMutation)
+
+// newActivityLogMutation creates new mutation for the ActivityLog entity.
+func newActivityLogMutation(c config, op Op, opts ...activitylogOption) *ActivityLogMutation {
+	m := &ActivityLogMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeActivityLog,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withActivityLogID sets the ID field of the mutation.
+func withActivityLogID(id int) activitylogOption {
+	return func(m *ActivityLogMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *ActivityLog
+		)
+		m.oldValue = func(ctx context.Context) (*ActivityLog, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().ActivityLog.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withActivityLog sets the old ActivityLog of the mutation.
+func withActivityLog(node *ActivityLog) activitylogOption {
+	return func(m *ActivityLogMutation) {
+		m.oldValue = func(context.Context) (*ActivityLog, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m ActivityLogMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m ActivityLogMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *ActivityLogMutation) ID() (id int, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *ActivityLogMutation) IDs(ctx context.Context) ([]int, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []int{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().ActivityLog.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetModule sets the "module" field.
+func (m *ActivityLogMutation) SetModule(s string) {
+	m.module = &s
+}
+
+// Module returns the value of the "module" field in the mutation.
+func (m *ActivityLogMutation) Module() (r string, exists bool) {
+	v := m.module
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldModule returns the old "module" field's value of the ActivityLog entity.
+// If the ActivityLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ActivityLogMutation) OldModule(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldModule is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldModule requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldModule: %w", err)
+	}
+	return oldValue.Module, nil
+}
+
+// ResetModule resets all changes to the "module" field.
+func (m *ActivityLogMutation) ResetModule() {
+	m.module = nil
+}
+
+// SetAccountID sets the "account_id" field.
+func (m *ActivityLogMutation) SetAccountID(s string) {
+	m.account_id = &s
+}
+
+// AccountID returns the value of the "account_id" field in the mutation.
+func (m *ActivityLogMutation) AccountID() (r string, exists bool) {
+	v := m.account_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAccountID returns the old "account_id" field's value of the ActivityLog entity.
+// If the ActivityLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ActivityLogMutation) OldAccountID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAccountID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAccountID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAccountID: %w", err)
+	}
+	return oldValue.AccountID, nil
+}
+
+// ResetAccountID resets all changes to the "account_id" field.
+func (m *ActivityLogMutation) ResetAccountID() {
+	m.account_id = nil
+}
+
+// SetCategory sets the "category" field.
+func (m *ActivityLogMutation) SetCategory(s string) {
+	m.category = &s
+}
+
+// Category returns the value of the "category" field in the mutation.
+func (m *ActivityLogMutation) Category() (r string, exists bool) {
+	v := m.category
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCategory returns the old "category" field's value of the ActivityLog entity.
+// If the ActivityLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ActivityLogMutation) OldCategory(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCategory is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCategory requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCategory: %w", err)
+	}
+	return oldValue.Category, nil
+}
+
+// ResetCategory resets all changes to the "category" field.
+func (m *ActivityLogMutation) ResetCategory() {
+	m.category = nil
+}
+
+// SetAction sets the "action" field.
+func (m *ActivityLogMutation) SetAction(s string) {
+	m.action = &s
+}
+
+// Action returns the value of the "action" field in the mutation.
+func (m *ActivityLogMutation) Action() (r string, exists bool) {
+	v := m.action
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAction returns the old "action" field's value of the ActivityLog entity.
+// If the ActivityLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ActivityLogMutation) OldAction(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAction is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAction requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAction: %w", err)
+	}
+	return oldValue.Action, nil
+}
+
+// ResetAction resets all changes to the "action" field.
+func (m *ActivityLogMutation) ResetAction() {
+	m.action = nil
+}
+
+// SetLevel sets the "level" field.
+func (m *ActivityLogMutation) SetLevel(s string) {
+	m.level = &s
+}
+
+// Level returns the value of the "level" field in the mutation.
+func (m *ActivityLogMutation) Level() (r string, exists bool) {
+	v := m.level
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldLevel returns the old "level" field's value of the ActivityLog entity.
+// If the ActivityLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ActivityLogMutation) OldLevel(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldLevel is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldLevel requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldLevel: %w", err)
+	}
+	return oldValue.Level, nil
+}
+
+// ResetLevel resets all changes to the "level" field.
+func (m *ActivityLogMutation) ResetLevel() {
+	m.level = nil
+}
+
+// SetOutcome sets the "outcome" field.
+func (m *ActivityLogMutation) SetOutcome(s string) {
+	m.outcome = &s
+}
+
+// Outcome returns the value of the "outcome" field in the mutation.
+func (m *ActivityLogMutation) Outcome() (r string, exists bool) {
+	v := m.outcome
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldOutcome returns the old "outcome" field's value of the ActivityLog entity.
+// If the ActivityLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ActivityLogMutation) OldOutcome(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldOutcome is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldOutcome requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldOutcome: %w", err)
+	}
+	return oldValue.Outcome, nil
+}
+
+// ResetOutcome resets all changes to the "outcome" field.
+func (m *ActivityLogMutation) ResetOutcome() {
+	m.outcome = nil
+}
+
+// SetSummary sets the "summary" field.
+func (m *ActivityLogMutation) SetSummary(s string) {
+	m.summary = &s
+}
+
+// Summary returns the value of the "summary" field in the mutation.
+func (m *ActivityLogMutation) Summary() (r string, exists bool) {
+	v := m.summary
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSummary returns the old "summary" field's value of the ActivityLog entity.
+// If the ActivityLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ActivityLogMutation) OldSummary(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSummary is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSummary requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSummary: %w", err)
+	}
+	return oldValue.Summary, nil
+}
+
+// ResetSummary resets all changes to the "summary" field.
+func (m *ActivityLogMutation) ResetSummary() {
+	m.summary = nil
+}
+
+// SetSource sets the "source" field.
+func (m *ActivityLogMutation) SetSource(s string) {
+	m.source = &s
+}
+
+// Source returns the value of the "source" field in the mutation.
+func (m *ActivityLogMutation) Source() (r string, exists bool) {
+	v := m.source
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSource returns the old "source" field's value of the ActivityLog entity.
+// If the ActivityLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ActivityLogMutation) OldSource(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSource is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSource requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSource: %w", err)
+	}
+	return oldValue.Source, nil
+}
+
+// ResetSource resets all changes to the "source" field.
+func (m *ActivityLogMutation) ResetSource() {
+	m.source = nil
+}
+
+// SetMethod sets the "method" field.
+func (m *ActivityLogMutation) SetMethod(s string) {
+	m.method = &s
+}
+
+// Method returns the value of the "method" field in the mutation.
+func (m *ActivityLogMutation) Method() (r string, exists bool) {
+	v := m.method
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldMethod returns the old "method" field's value of the ActivityLog entity.
+// If the ActivityLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ActivityLogMutation) OldMethod(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldMethod is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldMethod requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldMethod: %w", err)
+	}
+	return oldValue.Method, nil
+}
+
+// ResetMethod resets all changes to the "method" field.
+func (m *ActivityLogMutation) ResetMethod() {
+	m.method = nil
+}
+
+// SetPath sets the "path" field.
+func (m *ActivityLogMutation) SetPath(s string) {
+	m._path = &s
+}
+
+// Path returns the value of the "path" field in the mutation.
+func (m *ActivityLogMutation) Path() (r string, exists bool) {
+	v := m._path
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldPath returns the old "path" field's value of the ActivityLog entity.
+// If the ActivityLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ActivityLogMutation) OldPath(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldPath is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldPath requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldPath: %w", err)
+	}
+	return oldValue.Path, nil
+}
+
+// ResetPath resets all changes to the "path" field.
+func (m *ActivityLogMutation) ResetPath() {
+	m._path = nil
+}
+
+// SetHTTPStatus sets the "http_status" field.
+func (m *ActivityLogMutation) SetHTTPStatus(i int) {
+	m.http_status = &i
+	m.addhttp_status = nil
+}
+
+// HTTPStatus returns the value of the "http_status" field in the mutation.
+func (m *ActivityLogMutation) HTTPStatus() (r int, exists bool) {
+	v := m.http_status
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldHTTPStatus returns the old "http_status" field's value of the ActivityLog entity.
+// If the ActivityLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ActivityLogMutation) OldHTTPStatus(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldHTTPStatus is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldHTTPStatus requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldHTTPStatus: %w", err)
+	}
+	return oldValue.HTTPStatus, nil
+}
+
+// AddHTTPStatus adds i to the "http_status" field.
+func (m *ActivityLogMutation) AddHTTPStatus(i int) {
+	if m.addhttp_status != nil {
+		*m.addhttp_status += i
+	} else {
+		m.addhttp_status = &i
+	}
+}
+
+// AddedHTTPStatus returns the value that was added to the "http_status" field in this mutation.
+func (m *ActivityLogMutation) AddedHTTPStatus() (r int, exists bool) {
+	v := m.addhttp_status
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetHTTPStatus resets all changes to the "http_status" field.
+func (m *ActivityLogMutation) ResetHTTPStatus() {
+	m.http_status = nil
+	m.addhttp_status = nil
+}
+
+// SetDurationMs sets the "duration_ms" field.
+func (m *ActivityLogMutation) SetDurationMs(i int64) {
+	m.duration_ms = &i
+	m.addduration_ms = nil
+}
+
+// DurationMs returns the value of the "duration_ms" field in the mutation.
+func (m *ActivityLogMutation) DurationMs() (r int64, exists bool) {
+	v := m.duration_ms
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldDurationMs returns the old "duration_ms" field's value of the ActivityLog entity.
+// If the ActivityLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ActivityLogMutation) OldDurationMs(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldDurationMs is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldDurationMs requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldDurationMs: %w", err)
+	}
+	return oldValue.DurationMs, nil
+}
+
+// AddDurationMs adds i to the "duration_ms" field.
+func (m *ActivityLogMutation) AddDurationMs(i int64) {
+	if m.addduration_ms != nil {
+		*m.addduration_ms += i
+	} else {
+		m.addduration_ms = &i
+	}
+}
+
+// AddedDurationMs returns the value that was added to the "duration_ms" field in this mutation.
+func (m *ActivityLogMutation) AddedDurationMs() (r int64, exists bool) {
+	v := m.addduration_ms
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetDurationMs resets all changes to the "duration_ms" field.
+func (m *ActivityLogMutation) ResetDurationMs() {
+	m.duration_ms = nil
+	m.addduration_ms = nil
+}
+
+// SetRequestID sets the "request_id" field.
+func (m *ActivityLogMutation) SetRequestID(s string) {
+	m.request_id = &s
+}
+
+// RequestID returns the value of the "request_id" field in the mutation.
+func (m *ActivityLogMutation) RequestID() (r string, exists bool) {
+	v := m.request_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldRequestID returns the old "request_id" field's value of the ActivityLog entity.
+// If the ActivityLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ActivityLogMutation) OldRequestID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldRequestID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldRequestID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldRequestID: %w", err)
+	}
+	return oldValue.RequestID, nil
+}
+
+// ResetRequestID resets all changes to the "request_id" field.
+func (m *ActivityLogMutation) ResetRequestID() {
+	m.request_id = nil
+}
+
+// SetDetail sets the "detail" field.
+func (m *ActivityLogMutation) SetDetail(s string) {
+	m.detail = &s
+}
+
+// Detail returns the value of the "detail" field in the mutation.
+func (m *ActivityLogMutation) Detail() (r string, exists bool) {
+	v := m.detail
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldDetail returns the old "detail" field's value of the ActivityLog entity.
+// If the ActivityLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ActivityLogMutation) OldDetail(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldDetail is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldDetail requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldDetail: %w", err)
+	}
+	return oldValue.Detail, nil
+}
+
+// ResetDetail resets all changes to the "detail" field.
+func (m *ActivityLogMutation) ResetDetail() {
+	m.detail = nil
+}
+
+// SetMetadata sets the "metadata" field.
+func (m *ActivityLogMutation) SetMetadata(value map[string]interface{}) {
+	m.metadata = &value
+}
+
+// Metadata returns the value of the "metadata" field in the mutation.
+func (m *ActivityLogMutation) Metadata() (r map[string]interface{}, exists bool) {
+	v := m.metadata
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldMetadata returns the old "metadata" field's value of the ActivityLog entity.
+// If the ActivityLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ActivityLogMutation) OldMetadata(ctx context.Context) (v map[string]interface{}, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldMetadata is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldMetadata requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldMetadata: %w", err)
+	}
+	return oldValue.Metadata, nil
+}
+
+// ResetMetadata resets all changes to the "metadata" field.
+func (m *ActivityLogMutation) ResetMetadata() {
+	m.metadata = nil
+}
+
+// SetCreatedAt sets the "created_at" field.
+func (m *ActivityLogMutation) SetCreatedAt(t time.Time) {
+	m.created_at = &t
+}
+
+// CreatedAt returns the value of the "created_at" field in the mutation.
+func (m *ActivityLogMutation) CreatedAt() (r time.Time, exists bool) {
+	v := m.created_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCreatedAt returns the old "created_at" field's value of the ActivityLog entity.
+// If the ActivityLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ActivityLogMutation) OldCreatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCreatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCreatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCreatedAt: %w", err)
+	}
+	return oldValue.CreatedAt, nil
+}
+
+// ResetCreatedAt resets all changes to the "created_at" field.
+func (m *ActivityLogMutation) ResetCreatedAt() {
+	m.created_at = nil
+}
+
+// Where appends a list predicates to the ActivityLogMutation builder.
+func (m *ActivityLogMutation) Where(ps ...predicate.ActivityLog) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the ActivityLogMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *ActivityLogMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.ActivityLog, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *ActivityLogMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *ActivityLogMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (ActivityLog).
+func (m *ActivityLogMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *ActivityLogMutation) Fields() []string {
+	fields := make([]string, 0, 16)
+	if m.module != nil {
+		fields = append(fields, activitylog.FieldModule)
+	}
+	if m.account_id != nil {
+		fields = append(fields, activitylog.FieldAccountID)
+	}
+	if m.category != nil {
+		fields = append(fields, activitylog.FieldCategory)
+	}
+	if m.action != nil {
+		fields = append(fields, activitylog.FieldAction)
+	}
+	if m.level != nil {
+		fields = append(fields, activitylog.FieldLevel)
+	}
+	if m.outcome != nil {
+		fields = append(fields, activitylog.FieldOutcome)
+	}
+	if m.summary != nil {
+		fields = append(fields, activitylog.FieldSummary)
+	}
+	if m.source != nil {
+		fields = append(fields, activitylog.FieldSource)
+	}
+	if m.method != nil {
+		fields = append(fields, activitylog.FieldMethod)
+	}
+	if m._path != nil {
+		fields = append(fields, activitylog.FieldPath)
+	}
+	if m.http_status != nil {
+		fields = append(fields, activitylog.FieldHTTPStatus)
+	}
+	if m.duration_ms != nil {
+		fields = append(fields, activitylog.FieldDurationMs)
+	}
+	if m.request_id != nil {
+		fields = append(fields, activitylog.FieldRequestID)
+	}
+	if m.detail != nil {
+		fields = append(fields, activitylog.FieldDetail)
+	}
+	if m.metadata != nil {
+		fields = append(fields, activitylog.FieldMetadata)
+	}
+	if m.created_at != nil {
+		fields = append(fields, activitylog.FieldCreatedAt)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *ActivityLogMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case activitylog.FieldModule:
+		return m.Module()
+	case activitylog.FieldAccountID:
+		return m.AccountID()
+	case activitylog.FieldCategory:
+		return m.Category()
+	case activitylog.FieldAction:
+		return m.Action()
+	case activitylog.FieldLevel:
+		return m.Level()
+	case activitylog.FieldOutcome:
+		return m.Outcome()
+	case activitylog.FieldSummary:
+		return m.Summary()
+	case activitylog.FieldSource:
+		return m.Source()
+	case activitylog.FieldMethod:
+		return m.Method()
+	case activitylog.FieldPath:
+		return m.Path()
+	case activitylog.FieldHTTPStatus:
+		return m.HTTPStatus()
+	case activitylog.FieldDurationMs:
+		return m.DurationMs()
+	case activitylog.FieldRequestID:
+		return m.RequestID()
+	case activitylog.FieldDetail:
+		return m.Detail()
+	case activitylog.FieldMetadata:
+		return m.Metadata()
+	case activitylog.FieldCreatedAt:
+		return m.CreatedAt()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *ActivityLogMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case activitylog.FieldModule:
+		return m.OldModule(ctx)
+	case activitylog.FieldAccountID:
+		return m.OldAccountID(ctx)
+	case activitylog.FieldCategory:
+		return m.OldCategory(ctx)
+	case activitylog.FieldAction:
+		return m.OldAction(ctx)
+	case activitylog.FieldLevel:
+		return m.OldLevel(ctx)
+	case activitylog.FieldOutcome:
+		return m.OldOutcome(ctx)
+	case activitylog.FieldSummary:
+		return m.OldSummary(ctx)
+	case activitylog.FieldSource:
+		return m.OldSource(ctx)
+	case activitylog.FieldMethod:
+		return m.OldMethod(ctx)
+	case activitylog.FieldPath:
+		return m.OldPath(ctx)
+	case activitylog.FieldHTTPStatus:
+		return m.OldHTTPStatus(ctx)
+	case activitylog.FieldDurationMs:
+		return m.OldDurationMs(ctx)
+	case activitylog.FieldRequestID:
+		return m.OldRequestID(ctx)
+	case activitylog.FieldDetail:
+		return m.OldDetail(ctx)
+	case activitylog.FieldMetadata:
+		return m.OldMetadata(ctx)
+	case activitylog.FieldCreatedAt:
+		return m.OldCreatedAt(ctx)
+	}
+	return nil, fmt.Errorf("unknown ActivityLog field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *ActivityLogMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case activitylog.FieldModule:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetModule(v)
+		return nil
+	case activitylog.FieldAccountID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAccountID(v)
+		return nil
+	case activitylog.FieldCategory:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCategory(v)
+		return nil
+	case activitylog.FieldAction:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAction(v)
+		return nil
+	case activitylog.FieldLevel:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetLevel(v)
+		return nil
+	case activitylog.FieldOutcome:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetOutcome(v)
+		return nil
+	case activitylog.FieldSummary:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSummary(v)
+		return nil
+	case activitylog.FieldSource:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSource(v)
+		return nil
+	case activitylog.FieldMethod:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetMethod(v)
+		return nil
+	case activitylog.FieldPath:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetPath(v)
+		return nil
+	case activitylog.FieldHTTPStatus:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetHTTPStatus(v)
+		return nil
+	case activitylog.FieldDurationMs:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetDurationMs(v)
+		return nil
+	case activitylog.FieldRequestID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetRequestID(v)
+		return nil
+	case activitylog.FieldDetail:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetDetail(v)
+		return nil
+	case activitylog.FieldMetadata:
+		v, ok := value.(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetMetadata(v)
+		return nil
+	case activitylog.FieldCreatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCreatedAt(v)
+		return nil
+	}
+	return fmt.Errorf("unknown ActivityLog field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *ActivityLogMutation) AddedFields() []string {
+	var fields []string
+	if m.addhttp_status != nil {
+		fields = append(fields, activitylog.FieldHTTPStatus)
+	}
+	if m.addduration_ms != nil {
+		fields = append(fields, activitylog.FieldDurationMs)
+	}
+	return fields
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *ActivityLogMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	case activitylog.FieldHTTPStatus:
+		return m.AddedHTTPStatus()
+	case activitylog.FieldDurationMs:
+		return m.AddedDurationMs()
+	}
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *ActivityLogMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	case activitylog.FieldHTTPStatus:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddHTTPStatus(v)
+		return nil
+	case activitylog.FieldDurationMs:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddDurationMs(v)
+		return nil
+	}
+	return fmt.Errorf("unknown ActivityLog numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *ActivityLogMutation) ClearedFields() []string {
+	return nil
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *ActivityLogMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *ActivityLogMutation) ClearField(name string) error {
+	return fmt.Errorf("unknown ActivityLog nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *ActivityLogMutation) ResetField(name string) error {
+	switch name {
+	case activitylog.FieldModule:
+		m.ResetModule()
+		return nil
+	case activitylog.FieldAccountID:
+		m.ResetAccountID()
+		return nil
+	case activitylog.FieldCategory:
+		m.ResetCategory()
+		return nil
+	case activitylog.FieldAction:
+		m.ResetAction()
+		return nil
+	case activitylog.FieldLevel:
+		m.ResetLevel()
+		return nil
+	case activitylog.FieldOutcome:
+		m.ResetOutcome()
+		return nil
+	case activitylog.FieldSummary:
+		m.ResetSummary()
+		return nil
+	case activitylog.FieldSource:
+		m.ResetSource()
+		return nil
+	case activitylog.FieldMethod:
+		m.ResetMethod()
+		return nil
+	case activitylog.FieldPath:
+		m.ResetPath()
+		return nil
+	case activitylog.FieldHTTPStatus:
+		m.ResetHTTPStatus()
+		return nil
+	case activitylog.FieldDurationMs:
+		m.ResetDurationMs()
+		return nil
+	case activitylog.FieldRequestID:
+		m.ResetRequestID()
+		return nil
+	case activitylog.FieldDetail:
+		m.ResetDetail()
+		return nil
+	case activitylog.FieldMetadata:
+		m.ResetMetadata()
+		return nil
+	case activitylog.FieldCreatedAt:
+		m.ResetCreatedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown ActivityLog field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *ActivityLogMutation) AddedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *ActivityLogMutation) AddedIDs(name string) []ent.Value {
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *ActivityLogMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *ActivityLogMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *ActivityLogMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *ActivityLogMutation) EdgeCleared(name string) bool {
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *ActivityLogMutation) ClearEdge(name string) error {
+	return fmt.Errorf("unknown ActivityLog unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *ActivityLogMutation) ResetEdge(name string) error {
+	return fmt.Errorf("unknown ActivityLog edge %s", name)
+}
 
 // MailboxHiddenMessageMutation represents an operation that mutates the MailboxHiddenMessage nodes in the graph.
 type MailboxHiddenMessageMutation struct {
@@ -36,6 +1244,7 @@ type MailboxHiddenMessageMutation struct {
 	op            Op
 	typ           string
 	id            *int
+	account_id    *string
 	generation    *string
 	alias         *string
 	uid           *uint64
@@ -142,6 +1351,42 @@ func (m *MailboxHiddenMessageMutation) IDs(ctx context.Context) ([]int, error) {
 	default:
 		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
 	}
+}
+
+// SetAccountID sets the "account_id" field.
+func (m *MailboxHiddenMessageMutation) SetAccountID(s string) {
+	m.account_id = &s
+}
+
+// AccountID returns the value of the "account_id" field in the mutation.
+func (m *MailboxHiddenMessageMutation) AccountID() (r string, exists bool) {
+	v := m.account_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAccountID returns the old "account_id" field's value of the MailboxHiddenMessage entity.
+// If the MailboxHiddenMessage object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *MailboxHiddenMessageMutation) OldAccountID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAccountID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAccountID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAccountID: %w", err)
+	}
+	return oldValue.AccountID, nil
+}
+
+// ResetAccountID resets all changes to the "account_id" field.
+func (m *MailboxHiddenMessageMutation) ResetAccountID() {
+	m.account_id = nil
 }
 
 // SetGeneration sets the "generation" field.
@@ -306,7 +1551,10 @@ func (m *MailboxHiddenMessageMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *MailboxHiddenMessageMutation) Fields() []string {
-	fields := make([]string, 0, 3)
+	fields := make([]string, 0, 4)
+	if m.account_id != nil {
+		fields = append(fields, mailboxhiddenmessage.FieldAccountID)
+	}
 	if m.generation != nil {
 		fields = append(fields, mailboxhiddenmessage.FieldGeneration)
 	}
@@ -324,6 +1572,8 @@ func (m *MailboxHiddenMessageMutation) Fields() []string {
 // schema.
 func (m *MailboxHiddenMessageMutation) Field(name string) (ent.Value, bool) {
 	switch name {
+	case mailboxhiddenmessage.FieldAccountID:
+		return m.AccountID()
 	case mailboxhiddenmessage.FieldGeneration:
 		return m.Generation()
 	case mailboxhiddenmessage.FieldAlias:
@@ -339,6 +1589,8 @@ func (m *MailboxHiddenMessageMutation) Field(name string) (ent.Value, bool) {
 // database failed.
 func (m *MailboxHiddenMessageMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
 	switch name {
+	case mailboxhiddenmessage.FieldAccountID:
+		return m.OldAccountID(ctx)
 	case mailboxhiddenmessage.FieldGeneration:
 		return m.OldGeneration(ctx)
 	case mailboxhiddenmessage.FieldAlias:
@@ -354,6 +1606,13 @@ func (m *MailboxHiddenMessageMutation) OldField(ctx context.Context, name string
 // type.
 func (m *MailboxHiddenMessageMutation) SetField(name string, value ent.Value) error {
 	switch name {
+	case mailboxhiddenmessage.FieldAccountID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAccountID(v)
+		return nil
 	case mailboxhiddenmessage.FieldGeneration:
 		v, ok := value.(string)
 		if !ok {
@@ -439,6 +1698,9 @@ func (m *MailboxHiddenMessageMutation) ClearField(name string) error {
 // It returns an error if the field is not defined in the schema.
 func (m *MailboxHiddenMessageMutation) ResetField(name string) error {
 	switch name {
+	case mailboxhiddenmessage.FieldAccountID:
+		m.ResetAccountID()
+		return nil
 	case mailboxhiddenmessage.FieldGeneration:
 		m.ResetGeneration()
 		return nil
@@ -506,6 +1768,7 @@ type MailboxMessageMutation struct {
 	op                  Op
 	typ                 string
 	id                  *int
+	account_id          *string
 	generation          *string
 	uid                 *uint64
 	adduid              *int64
@@ -623,6 +1886,42 @@ func (m *MailboxMessageMutation) IDs(ctx context.Context) ([]int, error) {
 	default:
 		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
 	}
+}
+
+// SetAccountID sets the "account_id" field.
+func (m *MailboxMessageMutation) SetAccountID(s string) {
+	m.account_id = &s
+}
+
+// AccountID returns the value of the "account_id" field in the mutation.
+func (m *MailboxMessageMutation) AccountID() (r string, exists bool) {
+	v := m.account_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAccountID returns the old "account_id" field's value of the MailboxMessage entity.
+// If the MailboxMessage object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *MailboxMessageMutation) OldAccountID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAccountID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAccountID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAccountID: %w", err)
+	}
+	return oldValue.AccountID, nil
+}
+
+// ResetAccountID resets all changes to the "account_id" field.
+func (m *MailboxMessageMutation) ResetAccountID() {
+	m.account_id = nil
 }
 
 // SetGeneration sets the "generation" field.
@@ -1104,7 +2403,10 @@ func (m *MailboxMessageMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *MailboxMessageMutation) Fields() []string {
-	fields := make([]string, 0, 10)
+	fields := make([]string, 0, 11)
+	if m.account_id != nil {
+		fields = append(fields, mailboxmessage.FieldAccountID)
+	}
 	if m.generation != nil {
 		fields = append(fields, mailboxmessage.FieldGeneration)
 	}
@@ -1143,6 +2445,8 @@ func (m *MailboxMessageMutation) Fields() []string {
 // schema.
 func (m *MailboxMessageMutation) Field(name string) (ent.Value, bool) {
 	switch name {
+	case mailboxmessage.FieldAccountID:
+		return m.AccountID()
 	case mailboxmessage.FieldGeneration:
 		return m.Generation()
 	case mailboxmessage.FieldUID:
@@ -1172,6 +2476,8 @@ func (m *MailboxMessageMutation) Field(name string) (ent.Value, bool) {
 // database failed.
 func (m *MailboxMessageMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
 	switch name {
+	case mailboxmessage.FieldAccountID:
+		return m.OldAccountID(ctx)
 	case mailboxmessage.FieldGeneration:
 		return m.OldGeneration(ctx)
 	case mailboxmessage.FieldUID:
@@ -1201,6 +2507,13 @@ func (m *MailboxMessageMutation) OldField(ctx context.Context, name string) (ent
 // type.
 func (m *MailboxMessageMutation) SetField(name string, value ent.Value) error {
 	switch name {
+	case mailboxmessage.FieldAccountID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAccountID(v)
+		return nil
 	case mailboxmessage.FieldGeneration:
 		v, ok := value.(string)
 		if !ok {
@@ -1347,6 +2660,9 @@ func (m *MailboxMessageMutation) ClearField(name string) error {
 // It returns an error if the field is not defined in the schema.
 func (m *MailboxMessageMutation) ResetField(name string) error {
 	switch name {
+	case mailboxmessage.FieldAccountID:
+		m.ResetAccountID()
+		return nil
 	case mailboxmessage.FieldGeneration:
 		m.ResetGeneration()
 		return nil
@@ -1435,6 +2751,7 @@ type MailboxSyncStateMutation struct {
 	op                    Op
 	typ                   string
 	id                    *int
+	account_id            *string
 	key                   *string
 	status                *map[string]interface{}
 	highest_uid           *uint64
@@ -1543,6 +2860,42 @@ func (m *MailboxSyncStateMutation) IDs(ctx context.Context) ([]int, error) {
 	default:
 		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
 	}
+}
+
+// SetAccountID sets the "account_id" field.
+func (m *MailboxSyncStateMutation) SetAccountID(s string) {
+	m.account_id = &s
+}
+
+// AccountID returns the value of the "account_id" field in the mutation.
+func (m *MailboxSyncStateMutation) AccountID() (r string, exists bool) {
+	v := m.account_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAccountID returns the old "account_id" field's value of the MailboxSyncState entity.
+// If the MailboxSyncState object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *MailboxSyncStateMutation) OldAccountID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAccountID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAccountID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAccountID: %w", err)
+	}
+	return oldValue.AccountID, nil
+}
+
+// ResetAccountID resets all changes to the "account_id" field.
+func (m *MailboxSyncStateMutation) ResetAccountID() {
+	m.account_id = nil
 }
 
 // SetKey sets the "key" field.
@@ -1758,7 +3111,10 @@ func (m *MailboxSyncStateMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *MailboxSyncStateMutation) Fields() []string {
-	fields := make([]string, 0, 4)
+	fields := make([]string, 0, 5)
+	if m.account_id != nil {
+		fields = append(fields, mailboxsyncstate.FieldAccountID)
+	}
 	if m.key != nil {
 		fields = append(fields, mailboxsyncstate.FieldKey)
 	}
@@ -1779,6 +3135,8 @@ func (m *MailboxSyncStateMutation) Fields() []string {
 // schema.
 func (m *MailboxSyncStateMutation) Field(name string) (ent.Value, bool) {
 	switch name {
+	case mailboxsyncstate.FieldAccountID:
+		return m.AccountID()
 	case mailboxsyncstate.FieldKey:
 		return m.Key()
 	case mailboxsyncstate.FieldStatus:
@@ -1796,6 +3154,8 @@ func (m *MailboxSyncStateMutation) Field(name string) (ent.Value, bool) {
 // database failed.
 func (m *MailboxSyncStateMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
 	switch name {
+	case mailboxsyncstate.FieldAccountID:
+		return m.OldAccountID(ctx)
 	case mailboxsyncstate.FieldKey:
 		return m.OldKey(ctx)
 	case mailboxsyncstate.FieldStatus:
@@ -1813,6 +3173,13 @@ func (m *MailboxSyncStateMutation) OldField(ctx context.Context, name string) (e
 // type.
 func (m *MailboxSyncStateMutation) SetField(name string, value ent.Value) error {
 	switch name {
+	case mailboxsyncstate.FieldAccountID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAccountID(v)
+		return nil
 	case mailboxsyncstate.FieldKey:
 		v, ok := value.(string)
 		if !ok {
@@ -1905,6 +3272,9 @@ func (m *MailboxSyncStateMutation) ClearField(name string) error {
 // It returns an error if the field is not defined in the schema.
 func (m *MailboxSyncStateMutation) ResetField(name string) error {
 	switch name {
+	case mailboxsyncstate.FieldAccountID:
+		m.ResetAccountID()
+		return nil
 	case mailboxsyncstate.FieldKey:
 		m.ResetKey()
 		return nil

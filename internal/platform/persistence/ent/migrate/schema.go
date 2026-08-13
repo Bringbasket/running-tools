@@ -8,9 +8,58 @@ import (
 )
 
 var (
+	// ActivityLogsColumns holds the columns for the "activity_logs" table.
+	ActivityLogsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt, Increment: true},
+		{Name: "module", Type: field.TypeString, Size: 64},
+		{Name: "account_id", Type: field.TypeString, Size: 64, Default: "default"},
+		{Name: "category", Type: field.TypeString, Size: 64},
+		{Name: "action", Type: field.TypeString, Size: 128},
+		{Name: "level", Type: field.TypeString, Size: 16},
+		{Name: "outcome", Type: field.TypeString, Size: 16},
+		{Name: "summary", Type: field.TypeString, Size: 500},
+		{Name: "source", Type: field.TypeString, Size: 32},
+		{Name: "method", Type: field.TypeString, Size: 16, Default: ""},
+		{Name: "path", Type: field.TypeString, Size: 500, Default: ""},
+		{Name: "http_status", Type: field.TypeInt, Default: 0},
+		{Name: "duration_ms", Type: field.TypeInt64, Default: 0},
+		{Name: "request_id", Type: field.TypeString, Size: 128, Default: ""},
+		{Name: "detail", Type: field.TypeString, Size: 2000, Default: ""},
+		{Name: "metadata", Type: field.TypeJSON},
+		{Name: "created_at", Type: field.TypeTime},
+	}
+	// ActivityLogsTable holds the schema information for the "activity_logs" table.
+	ActivityLogsTable = &schema.Table{
+		Name:       "activity_logs",
+		Columns:    ActivityLogsColumns,
+		PrimaryKey: []*schema.Column{ActivityLogsColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "activitylog_module_account_id_created_at",
+				Unique:  false,
+				Columns: []*schema.Column{ActivityLogsColumns[1], ActivityLogsColumns[2], ActivityLogsColumns[16]},
+			},
+			{
+				Name:    "activitylog_module_account_id_category_created_at",
+				Unique:  false,
+				Columns: []*schema.Column{ActivityLogsColumns[1], ActivityLogsColumns[2], ActivityLogsColumns[3], ActivityLogsColumns[16]},
+			},
+			{
+				Name:    "activitylog_module_account_id_level_created_at",
+				Unique:  false,
+				Columns: []*schema.Column{ActivityLogsColumns[1], ActivityLogsColumns[2], ActivityLogsColumns[5], ActivityLogsColumns[16]},
+			},
+			{
+				Name:    "activitylog_request_id",
+				Unique:  false,
+				Columns: []*schema.Column{ActivityLogsColumns[13]},
+			},
+		},
+	}
 	// MailboxHiddenMessagesColumns holds the columns for the "mailbox_hidden_messages" table.
 	MailboxHiddenMessagesColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt, Increment: true},
+		{Name: "account_id", Type: field.TypeString, Size: 64, Default: "default"},
 		{Name: "generation", Type: field.TypeString, Size: 128},
 		{Name: "alias", Type: field.TypeString, Size: 320},
 		{Name: "uid", Type: field.TypeUint64},
@@ -22,20 +71,21 @@ var (
 		PrimaryKey: []*schema.Column{MailboxHiddenMessagesColumns[0]},
 		Indexes: []*schema.Index{
 			{
-				Name:    "mailboxhiddenmessage_generation_alias_uid",
+				Name:    "mailboxhiddenmessage_account_id_generation_alias_uid",
 				Unique:  true,
-				Columns: []*schema.Column{MailboxHiddenMessagesColumns[1], MailboxHiddenMessagesColumns[2], MailboxHiddenMessagesColumns[3]},
+				Columns: []*schema.Column{MailboxHiddenMessagesColumns[1], MailboxHiddenMessagesColumns[2], MailboxHiddenMessagesColumns[3], MailboxHiddenMessagesColumns[4]},
 			},
 			{
-				Name:    "mailboxhiddenmessage_generation_uid",
+				Name:    "mailboxhiddenmessage_account_id_generation_uid",
 				Unique:  false,
-				Columns: []*schema.Column{MailboxHiddenMessagesColumns[1], MailboxHiddenMessagesColumns[3]},
+				Columns: []*schema.Column{MailboxHiddenMessagesColumns[1], MailboxHiddenMessagesColumns[2], MailboxHiddenMessagesColumns[4]},
 			},
 		},
 	}
 	// MailboxMessagesColumns holds the columns for the "mailbox_messages" table.
 	MailboxMessagesColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt, Increment: true},
+		{Name: "account_id", Type: field.TypeString, Size: 64, Default: "default"},
 		{Name: "generation", Type: field.TypeString, Size: 128},
 		{Name: "uid", Type: field.TypeUint64},
 		{Name: "aliases", Type: field.TypeJSON},
@@ -54,20 +104,21 @@ var (
 		PrimaryKey: []*schema.Column{MailboxMessagesColumns[0]},
 		Indexes: []*schema.Index{
 			{
-				Name:    "mailboxmessage_generation_uid",
+				Name:    "mailboxmessage_account_id_generation_uid",
 				Unique:  true,
-				Columns: []*schema.Column{MailboxMessagesColumns[1], MailboxMessagesColumns[2]},
+				Columns: []*schema.Column{MailboxMessagesColumns[1], MailboxMessagesColumns[2], MailboxMessagesColumns[3]},
 			},
 			{
-				Name:    "mailboxmessage_generation_message_date",
+				Name:    "mailboxmessage_account_id_generation_message_date",
 				Unique:  false,
-				Columns: []*schema.Column{MailboxMessagesColumns[1], MailboxMessagesColumns[6]},
+				Columns: []*schema.Column{MailboxMessagesColumns[1], MailboxMessagesColumns[2], MailboxMessagesColumns[7]},
 			},
 		},
 	}
 	// MailboxSyncStatesColumns holds the columns for the "mailbox_sync_states" table.
 	MailboxSyncStatesColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt, Increment: true},
+		{Name: "account_id", Type: field.TypeString, Size: 64, Default: "default"},
 		{Name: "key", Type: field.TypeString, Size: 64},
 		{Name: "status", Type: field.TypeJSON},
 		{Name: "highest_uid", Type: field.TypeUint64, Default: 0},
@@ -80,14 +131,15 @@ var (
 		PrimaryKey: []*schema.Column{MailboxSyncStatesColumns[0]},
 		Indexes: []*schema.Index{
 			{
-				Name:    "mailboxsyncstate_key",
+				Name:    "mailboxsyncstate_account_id_key",
 				Unique:  true,
-				Columns: []*schema.Column{MailboxSyncStatesColumns[1]},
+				Columns: []*schema.Column{MailboxSyncStatesColumns[1], MailboxSyncStatesColumns[2]},
 			},
 		},
 	}
 	// Tables holds all the tables in the schema.
 	Tables = []*schema.Table{
+		ActivityLogsTable,
 		MailboxHiddenMessagesTable,
 		MailboxMessagesTable,
 		MailboxSyncStatesTable,

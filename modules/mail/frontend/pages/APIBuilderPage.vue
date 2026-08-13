@@ -6,7 +6,6 @@ import { authState } from '../../../../frontend/src/auth'
 type Endpoint = { id: string; method: 'GET' | 'POST'; path: string; label: string; needsID?: boolean; body?: string }
 const endpoints: Endpoint[] = [
   { id: 'list', method: 'GET', path: '/api/mail/v1/aliases', label: '获取邮箱列表' },
-  { id: 'create', method: 'POST', path: '/api/mail/v1/aliases', label: '创建邮箱', body: '{\n  "label": "shopping",\n  "note": ""\n}' },
   { id: 'status', method: 'GET', path: '/api/mail/v1/session/status', label: 'Session 状态' },
   { id: 'refresh', method: 'POST', path: '/api/mail/v1/session/refresh', label: '检查 Session', body: '{}' },
   { id: 'disable', method: 'POST', path: '/api/mail/v1/aliases/{id}/disable', label: '停用邮箱', needsID: true, body: '{}' },

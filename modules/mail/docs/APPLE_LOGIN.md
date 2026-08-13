@@ -14,8 +14,8 @@ Session 页面只提供一个登录向导，通过分段控件切换 `Apple Acco
 
 | 通道 | Apple 网页接口 | 用途 | 持久化位置 |
 | --- | --- | --- | --- |
-| Apple Account | `/account/manage/*` | 默认隐藏邮箱列表、创建和管理通道 | `state/apple-account-state.json` |
-| iCloud Web | `/accountLogin`、`/setup/ws/1/validate`、`/v2/hme/*` | 列表、检查、管理、同步和备用创建 | `hme-config.json` |
+| Apple Account | `/account/manage/*` | 默认隐藏邮箱列表、创建和管理通道 | PostgreSQL 账号状态 |
+| iCloud Web | `/accountLogin`、`/setup/ws/1/validate`、`/v2/hme/*` | 列表、检查、管理、同步和备用创建 | PostgreSQL 账号状态 |
 
 `iCloud Web` 是现有 Session 的完整替代来源。登录使用 SRP，完成 2FA 和 trust 后，通过
 validate 响应生成 DSID、maildomainws 主机、构建号和 Cookie。
@@ -38,7 +38,7 @@ Web 主会话的情况下回退旧接口。服务会在自动 Session 检查时�
 5. 创建成功后最佳努力读取 `.em` 详情，补全转发地址和启用状态；读取失败不影响创建成功。
 6. 持久化批量队列固定使用 iCloud Web，保留候选地址和确认阶段的重启恢复语义。
 
-每个通道的冷却截止时间、最近错误和最近成功创建保存在 `state/create-channels.json`。Apple
+每个通道的冷却截止时间、最近错误和最近成功创建按邮件账号保存在 PostgreSQL。Apple
 返回 `retryAfter` 时按其值冷却；未返回时限额默认 2 分钟、其他暂时错误默认 30 秒。冷却期间
 自动创建直接跳过该通道，服务重启不会丢失冷却状态。
 

@@ -27,3 +27,11 @@ func TestWriteJSONRoundTrip(t *testing.T) {
 		t.Fatalf("state file missing: %v", err)
 	}
 }
+
+func TestPostgresStateDoesNotCaptureSystemUpdateFiles(t *testing.T) {
+	// The routing decision is exercised indirectly by production configuration;
+	// this test protects the explicit system/ exclusion from future refactors.
+	if stateDB(filepath.Join("D:", "runtime", "system", "update-status.json")) != nil {
+		t.Fatal("system update files must remain file-backed")
+	}
+}

@@ -17,6 +17,7 @@ Gin 用于 HTTP 网关和中间件，Ent 用于 PostgreSQL 模型管理，Redis 
 3. 保持旧版公共 API 稳定，同时提供新的命名空间 API。
 4. 将生产前端嵌入一个 Go 可执行程序中。
 5. 应用容器永远不接触 Docker Socket。
+6. 公共日志基础设施复用统一模型，但日志读取和界面按一级业务模块严格隔离。
 
 ## 运行层次
 
@@ -42,6 +43,10 @@ Gin 用于 HTTP 网关和中间件，Ent 用于 PostgreSQL 模型管理，Redis 
 邮件模块的标准接口注册在 `/api/mail/v1` 下。旧版 `/v1` 接口作为兼容别名继续
 保留，原有脚本无需立即修改。
 
+邮件模块按 `mail_accounts.id` 建立运行空间。每个账号实例化独立 Session 管理器、自动刷新
+Worker、自动创建 Worker、批量队列、IMAP 服务和日志仓库；请求通过 `X-Mail-Account-ID`
+选择账号。切换前端当前账号不会停止其他账号的后台任务。
+
 ## 前端模块约定
 
 根目录 `frontend/src` 只包含应用外壳、公共组件、身份验证、系统更新界面和模块
@@ -56,8 +61,8 @@ Gin 用于 HTTP 网关和中间件，Ent 用于 PostgreSQL 模型管理，Redis 
 Vue 单文件组件的模板和 TypeScript 逻辑放在对应模块目录内。模块专属 API
 客户端、类型、组件、样式和测试也应保留在该模块中。
 
-当前导航注册表为每个模块渲染一个一级折叠菜单。邮件系统下包含邮箱管理、API
-调试和 Session 管理。未来的 Codex APP 或 CAP 转换功能必须建立新的同级模块，
+当前导航注册表为每个模块渲染一个一级折叠菜单。邮件系统下包含邮箱管理、收件箱、API
+调试、Session 管理和邮件系统使用日志。未来的 Codex APP 或 CAP 转换功能必须建立新的同级模块，
 不能作为不相关页面添加到邮件系统中。
 
 工具箱作为 `modules/tools` 独立模块注册，内部可以包含多个小型工具页面。纯本地计算
@@ -66,31 +71,32 @@ Vue 单文件组件的模板和 TypeScript 逻辑放在对应模块目录内。�
 
 ## 持久化数据
 
-当前邮件缓存支持三种数据路径：`json` 用于无数据库本地开发，`dual` 以 JSON 为主读并
-同步写 PostgreSQL，`postgres` 以 PostgreSQL 为主数据源。PostgreSQL 保存邮件正文、
+生产邮件模块统一使用 PostgreSQL 主数据源。旧版 `json`/`dual` 仅用于迁移旧部署，
+迁移完成后不再写入 JSON。PostgreSQL 保存账号、Session、Apple Account、任务状态、邮件正文、
 验证码索引、隐藏记录与 IMAP 同步状态；Redis 当前用于多实例 IMAP 同步锁，故障时回退
 本进程锁。Redis 不得作为唯一持久化来源。
 
-会持续快速增长的数据按优先级为：邮件正文和安全 HTML、分享链接与分享会话、创建任务
-执行历史、审计日志。第一类已经迁移；其余类型应直接建 PostgreSQL 模型，不能继续设计
-为无限增长的整份 JSON 文件。
+会持续增长的数据必须按记录建表：邮件正文和安全 HTML位于 `mailbox_messages`，隐藏记录位于
+`mailbox_hidden_messages`，分享链接和会话位于 `mail_share_links`、`mail_share_sessions`，
+使用日志位于 `activity_logs`。配置、Session 和任务当前状态按账号存入 `running_state` 的
+JSONB 单行，不会生成或追加生产 JSON 文件。
 
 ```text
-data/
-|-- system/
-|   |-- check-request.json
-|   |-- update-request.json
-|   `-- update-status.json
-`-- mail/
-    |-- hme-config.json
-    `-- state/
-        |-- hme-session.json
-        |-- session-state.json
-        `-- auto-refresh.json
+PostgreSQL
+|-- mail_accounts
+|-- running_state
+|-- mailbox_messages / mailbox_hidden_messages / mailbox_sync_states
+|-- mail_share_links / mail_share_sessions
+`-- activity_logs
+
+data/system
+|-- check-request.json
+|-- update-request.json
+`-- update-status.json
 ```
 
-敏感文件使用临时文件加替换的方式写入，并设置严格权限。Session Cookie 不会由
-API 返回，也不会写入日志。
+`data/system` 的文件是 Go 容器与宿主机更新服务的受限通信协议，不是业务数据库。
+Session Cookie 不会由 API 返回，也不会写入日志。
 
 ## 系统更新边界
 

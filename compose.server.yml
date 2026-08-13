@@ -6,17 +6,14 @@ services:
     env_file:
       - .env
     environment:
-      RUNNING_STORAGE_MODE: ${RUNNING_STORAGE_MODE:-dual}
-      RUNNING_POSTGRES_HOST: postgres
-      RUNNING_POSTGRES_PORT: 5432
-      RUNNING_POSTGRES_DB: ${RUNNING_POSTGRES_DB:-running_tools}
-      RUNNING_POSTGRES_USER: ${RUNNING_POSTGRES_USER:-running_tools}
-      RUNNING_POSTGRES_PASSWORD: ${RUNNING_POSTGRES_PASSWORD:?请在.env中设置RUNNING_POSTGRES_PASSWORD}
-      RUNNING_POSTGRES_SSLMODE: disable
+      # PostgreSQL is supplied by the existing host/service through .env.
+      # Do not add a project-owned database container here.
       RUNNING_REDIS_ADDR: redis:6379
-      RUNNING_REDIS_PASSWORD: ${RUNNING_REDIS_PASSWORD:?请在.env中设置RUNNING_REDIS_PASSWORD}
+      RUNNING_REDIS_PASSWORD: ${RUNNING_REDIS_PASSWORD:?Set RUNNING_REDIS_PASSWORD in .env}
     ports:
       - "127.0.0.1:${RUNNING_HOST_PORT:-8091}:8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./data:/data
     security_opt:
@@ -33,28 +30,8 @@ services:
       retries: 4
       start_period: 10s
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_started
-    networks:
-      - running-tools-internal
-
-  postgres:
-    image: postgres:16-alpine
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: ${RUNNING_POSTGRES_DB:-running_tools}
-      POSTGRES_USER: ${RUNNING_POSTGRES_USER:-running_tools}
-      POSTGRES_PASSWORD: ${RUNNING_POSTGRES_PASSWORD:?请在.env中设置RUNNING_POSTGRES_PASSWORD}
-    volumes:
-      - running-tools-postgres:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
-      interval: 10s
-      timeout: 5s
-      retries: 6
-      start_period: 10s
     networks:
       - running-tools-internal
 
@@ -62,8 +39,8 @@ services:
     image: redis:7-alpine
     restart: unless-stopped
     environment:
-      RUNNING_REDIS_PASSWORD: ${RUNNING_REDIS_PASSWORD:?请在.env中设置RUNNING_REDIS_PASSWORD}
-    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${RUNNING_REDIS_PASSWORD:?请在.env中设置RUNNING_REDIS_PASSWORD}"]
+      RUNNING_REDIS_PASSWORD: ${RUNNING_REDIS_PASSWORD:?Set RUNNING_REDIS_PASSWORD in .env}
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${RUNNING_REDIS_PASSWORD:?Set RUNNING_REDIS_PASSWORD in .env}"]
     volumes:
       - running-tools-redis:/data
     healthcheck:
@@ -76,7 +53,6 @@ services:
       - running-tools-internal
 
 volumes:
-  running-tools-postgres:
   running-tools-redis:
 
 networks:

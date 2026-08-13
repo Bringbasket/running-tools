@@ -52,6 +52,11 @@ func IDLTE(id int) predicate.MailboxHiddenMessage {
 	return predicate.MailboxHiddenMessage(sql.FieldLTE(FieldID, id))
 }
 
+// AccountID applies equality check predicate on the "account_id" field. It's identical to AccountIDEQ.
+func AccountID(v string) predicate.MailboxHiddenMessage {
+	return predicate.MailboxHiddenMessage(sql.FieldEQ(FieldAccountID, v))
+}
+
 // Generation applies equality check predicate on the "generation" field. It's identical to GenerationEQ.
 func Generation(v string) predicate.MailboxHiddenMessage {
 	return predicate.MailboxHiddenMessage(sql.FieldEQ(FieldGeneration, v))
@@ -65,6 +70,71 @@ func Alias(v string) predicate.MailboxHiddenMessage {
 // UID applies equality check predicate on the "uid" field. It's identical to UIDEQ.
 func UID(v uint64) predicate.MailboxHiddenMessage {
 	return predicate.MailboxHiddenMessage(sql.FieldEQ(FieldUID, v))
+}
+
+// AccountIDEQ applies the EQ predicate on the "account_id" field.
+func AccountIDEQ(v string) predicate.MailboxHiddenMessage {
+	return predicate.MailboxHiddenMessage(sql.FieldEQ(FieldAccountID, v))
+}
+
+// AccountIDNEQ applies the NEQ predicate on the "account_id" field.
+func AccountIDNEQ(v string) predicate.MailboxHiddenMessage {
+	return predicate.MailboxHiddenMessage(sql.FieldNEQ(FieldAccountID, v))
+}
+
+// AccountIDIn applies the In predicate on the "account_id" field.
+func AccountIDIn(vs ...string) predicate.MailboxHiddenMessage {
+	return predicate.MailboxHiddenMessage(sql.FieldIn(FieldAccountID, vs...))
+}
+
+// AccountIDNotIn applies the NotIn predicate on the "account_id" field.
+func AccountIDNotIn(vs ...string) predicate.MailboxHiddenMessage {
+	return predicate.MailboxHiddenMessage(sql.FieldNotIn(FieldAccountID, vs...))
+}
+
+// AccountIDGT applies the GT predicate on the "account_id" field.
+func AccountIDGT(v string) predicate.MailboxHiddenMessage {
+	return predicate.MailboxHiddenMessage(sql.FieldGT(FieldAccountID, v))
+}
+
+// AccountIDGTE applies the GTE predicate on the "account_id" field.
+func AccountIDGTE(v string) predicate.MailboxHiddenMessage {
+	return predicate.MailboxHiddenMessage(sql.FieldGTE(FieldAccountID, v))
+}
+
+// AccountIDLT applies the LT predicate on the "account_id" field.
+func AccountIDLT(v string) predicate.MailboxHiddenMessage {
+	return predicate.MailboxHiddenMessage(sql.FieldLT(FieldAccountID, v))
+}
+
+// AccountIDLTE applies the LTE predicate on the "account_id" field.
+func AccountIDLTE(v string) predicate.MailboxHiddenMessage {
+	return predicate.MailboxHiddenMessage(sql.FieldLTE(FieldAccountID, v))
+}
+
+// AccountIDContains applies the Contains predicate on the "account_id" field.
+func AccountIDContains(v string) predicate.MailboxHiddenMessage {
+	return predicate.MailboxHiddenMessage(sql.FieldContains(FieldAccountID, v))
+}
+
+// AccountIDHasPrefix applies the HasPrefix predicate on the "account_id" field.
+func AccountIDHasPrefix(v string) predicate.MailboxHiddenMessage {
+	return predicate.MailboxHiddenMessage(sql.FieldHasPrefix(FieldAccountID, v))
+}
+
+// AccountIDHasSuffix applies the HasSuffix predicate on the "account_id" field.
+func AccountIDHasSuffix(v string) predicate.MailboxHiddenMessage {
+	return predicate.MailboxHiddenMessage(sql.FieldHasSuffix(FieldAccountID, v))
+}
+
+// AccountIDEqualFold applies the EqualFold predicate on the "account_id" field.
+func AccountIDEqualFold(v string) predicate.MailboxHiddenMessage {
+	return predicate.MailboxHiddenMessage(sql.FieldEqualFold(FieldAccountID, v))
+}
+
+// AccountIDContainsFold applies the ContainsFold predicate on the "account_id" field.
+func AccountIDContainsFold(v string) predicate.MailboxHiddenMessage {
+	return predicate.MailboxHiddenMessage(sql.FieldContainsFold(FieldAccountID, v))
 }
 
 // GenerationEQ applies the EQ predicate on the "generation" field.

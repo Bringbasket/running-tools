@@ -49,7 +49,7 @@ running-tools/
 - Session 持久化、状态检查和服务端自动刷新；
 - 邮箱创建计划由前端配置、Go 后台 Worker 持久执行；
 - 从私有 GHCR 镜像更新、健康检查、失败回滚和自动重启；
-- 邮件缓存可按 `json`、`dual`、`postgres` 三种模式迁移到 PostgreSQL；
+- 生产统一使用 PostgreSQL，旧 JSON 仅在首次迁移时导入，迁移后不再创建业务 JSON；
 - 桌面端可收起侧栏、移动端抽屉菜单和深浅色主题。
 - 独立工具箱菜单，以及纯前端的保本测算（保本倍率、额度反推和利润试算）。
 
@@ -59,7 +59,8 @@ running-tools/
 ## 本地开发
 
 环境要求：Go 1.24 或更高版本、Node.js 22 或更高版本、npm 11 或更高版本。直接本地
-运行默认采用 `json` 存储；完整生产环境通过 Compose 启动 PostgreSQL 16 和 Redis 7。
+本地和生产默认均采用 PostgreSQL；本项目 Compose 只管理应用和 Redis，PostgreSQL 通过
+`.env` 中的 `RUNNING_DATABASE_URL` 连接已有实例。本地 `go run` 会自动读取仓库根目录的 `.env`。
 
 ```bash
 cp .env.example .env

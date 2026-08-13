@@ -52,6 +52,7 @@ func Open(ctx context.Context, cfg Config) (*Service, error) {
 
 func (s *Service) Mode() StorageMode { return s.config.Mode }
 func (s *Service) Ent() *ent.Client  { return s.ent }
+func (s *Service) DB() *sql.DB       { return s.db }
 
 func (s *Service) Close() error {
 	if s.redis != nil {

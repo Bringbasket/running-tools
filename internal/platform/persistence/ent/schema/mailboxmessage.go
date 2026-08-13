@@ -12,6 +12,7 @@ type MailboxMessage struct {
 
 func (MailboxMessage) Fields() []ent.Field {
 	return []ent.Field{
+		field.String("account_id").Default("default").MaxLen(64),
 		field.String("generation").NotEmpty().MaxLen(128),
 		field.Uint64("uid"),
 		field.JSON("aliases", []string{}).Default([]string{}),
@@ -27,7 +28,7 @@ func (MailboxMessage) Fields() []ent.Field {
 
 func (MailboxMessage) Indexes() []ent.Index {
 	return []ent.Index{
-		index.Fields("generation", "uid").Unique(),
-		index.Fields("generation", "message_date"),
+		index.Fields("account_id", "generation", "uid").Unique(),
+		index.Fields("account_id", "generation", "message_date"),
 	}
 }

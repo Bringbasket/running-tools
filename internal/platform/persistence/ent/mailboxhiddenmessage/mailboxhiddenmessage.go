@@ -11,6 +11,8 @@ const (
 	Label = "mailbox_hidden_message"
 	// FieldID holds the string denoting the id field in the database.
 	FieldID = "id"
+	// FieldAccountID holds the string denoting the account_id field in the database.
+	FieldAccountID = "account_id"
 	// FieldGeneration holds the string denoting the generation field in the database.
 	FieldGeneration = "generation"
 	// FieldAlias holds the string denoting the alias field in the database.
@@ -24,6 +26,7 @@ const (
 // Columns holds all SQL columns for mailboxhiddenmessage fields.
 var Columns = []string{
 	FieldID,
+	FieldAccountID,
 	FieldGeneration,
 	FieldAlias,
 	FieldUID,
@@ -40,6 +43,10 @@ func ValidColumn(column string) bool {
 }
 
 var (
+	// DefaultAccountID holds the default value on creation for the "account_id" field.
+	DefaultAccountID string
+	// AccountIDValidator is a validator for the "account_id" field. It is called by the builders before save.
+	AccountIDValidator func(string) error
 	// GenerationValidator is a validator for the "generation" field. It is called by the builders before save.
 	GenerationValidator func(string) error
 	// AliasValidator is a validator for the "alias" field. It is called by the builders before save.
@@ -52,6 +59,11 @@ type OrderOption func(*sql.Selector)
 // ByID orders the results by the id field.
 func ByID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldID, opts...).ToFunc()
+}
+
+// ByAccountID orders the results by the account_id field.
+func ByAccountID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldAccountID, opts...).ToFunc()
 }
 
 // ByGeneration orders the results by the generation field.

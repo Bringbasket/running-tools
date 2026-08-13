@@ -12,6 +12,7 @@ type MailboxSyncState struct {
 
 func (MailboxSyncState) Fields() []ent.Field {
 	return []ent.Field{
+		field.String("account_id").Default("default").MaxLen(64),
 		field.String("key").NotEmpty().MaxLen(64),
 		field.JSON("status", map[string]any{}).Default(map[string]any{}),
 		field.Uint64("highest_uid").Default(0),
@@ -20,5 +21,5 @@ func (MailboxSyncState) Fields() []ent.Field {
 }
 
 func (MailboxSyncState) Indexes() []ent.Index {
-	return []ent.Index{index.Fields("key").Unique()}
+	return []ent.Index{index.Fields("account_id", "key").Unique()}
 }

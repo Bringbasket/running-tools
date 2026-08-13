@@ -12,6 +12,7 @@ import (
 	"entgo.io/ent"
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
+	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/activitylog"
 	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/mailboxhiddenmessage"
 	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/mailboxmessage"
 	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/mailboxsyncstate"
@@ -75,6 +76,7 @@ var (
 func checkColumn(t, c string) error {
 	initCheck.Do(func() {
 		columnCheck = sql.NewColumnCheck(map[string]func(string) bool{
+			activitylog.Table:          activitylog.ValidColumn,
 			mailboxhiddenmessage.Table: mailboxhiddenmessage.ValidColumn,
 			mailboxmessage.Table:       mailboxmessage.ValidColumn,
 			mailboxsyncstate.Table:     mailboxsyncstate.ValidColumn,

@@ -9,8 +9,9 @@ describe('mail module manifest', () => {
       '/mail/mailbox',
       '/mail/api-builder',
       '/mail/session',
+      '/mail/logs',
     ])
-    expect(mailModule.routes).toHaveLength(4)
+    expect(mailModule.routes).toHaveLength(5)
   })
 })
 

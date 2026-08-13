@@ -3,6 +3,9 @@
 package ent
 
 import (
+	"time"
+
+	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/activitylog"
 	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/mailboxhiddenmessage"
 	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/mailboxmessage"
 	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/mailboxsyncstate"
@@ -13,10 +16,190 @@ import (
 // (default values, validators, hooks and policies) and stitches it
 // to their package variables.
 func init() {
+	activitylogFields := schema.ActivityLog{}.Fields()
+	_ = activitylogFields
+	// activitylogDescModule is the schema descriptor for module field.
+	activitylogDescModule := activitylogFields[0].Descriptor()
+	// activitylog.ModuleValidator is a validator for the "module" field. It is called by the builders before save.
+	activitylog.ModuleValidator = func() func(string) error {
+		validators := activitylogDescModule.Validators
+		fns := [...]func(string) error{
+			validators[0].(func(string) error),
+			validators[1].(func(string) error),
+		}
+		return func(module string) error {
+			for _, fn := range fns {
+				if err := fn(module); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}()
+	// activitylogDescAccountID is the schema descriptor for account_id field.
+	activitylogDescAccountID := activitylogFields[1].Descriptor()
+	// activitylog.DefaultAccountID holds the default value on creation for the account_id field.
+	activitylog.DefaultAccountID = activitylogDescAccountID.Default.(string)
+	// activitylog.AccountIDValidator is a validator for the "account_id" field. It is called by the builders before save.
+	activitylog.AccountIDValidator = activitylogDescAccountID.Validators[0].(func(string) error)
+	// activitylogDescCategory is the schema descriptor for category field.
+	activitylogDescCategory := activitylogFields[2].Descriptor()
+	// activitylog.CategoryValidator is a validator for the "category" field. It is called by the builders before save.
+	activitylog.CategoryValidator = func() func(string) error {
+		validators := activitylogDescCategory.Validators
+		fns := [...]func(string) error{
+			validators[0].(func(string) error),
+			validators[1].(func(string) error),
+		}
+		return func(category string) error {
+			for _, fn := range fns {
+				if err := fn(category); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}()
+	// activitylogDescAction is the schema descriptor for action field.
+	activitylogDescAction := activitylogFields[3].Descriptor()
+	// activitylog.ActionValidator is a validator for the "action" field. It is called by the builders before save.
+	activitylog.ActionValidator = func() func(string) error {
+		validators := activitylogDescAction.Validators
+		fns := [...]func(string) error{
+			validators[0].(func(string) error),
+			validators[1].(func(string) error),
+		}
+		return func(action string) error {
+			for _, fn := range fns {
+				if err := fn(action); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}()
+	// activitylogDescLevel is the schema descriptor for level field.
+	activitylogDescLevel := activitylogFields[4].Descriptor()
+	// activitylog.LevelValidator is a validator for the "level" field. It is called by the builders before save.
+	activitylog.LevelValidator = func() func(string) error {
+		validators := activitylogDescLevel.Validators
+		fns := [...]func(string) error{
+			validators[0].(func(string) error),
+			validators[1].(func(string) error),
+		}
+		return func(level string) error {
+			for _, fn := range fns {
+				if err := fn(level); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}()
+	// activitylogDescOutcome is the schema descriptor for outcome field.
+	activitylogDescOutcome := activitylogFields[5].Descriptor()
+	// activitylog.OutcomeValidator is a validator for the "outcome" field. It is called by the builders before save.
+	activitylog.OutcomeValidator = func() func(string) error {
+		validators := activitylogDescOutcome.Validators
+		fns := [...]func(string) error{
+			validators[0].(func(string) error),
+			validators[1].(func(string) error),
+		}
+		return func(outcome string) error {
+			for _, fn := range fns {
+				if err := fn(outcome); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}()
+	// activitylogDescSummary is the schema descriptor for summary field.
+	activitylogDescSummary := activitylogFields[6].Descriptor()
+	// activitylog.SummaryValidator is a validator for the "summary" field. It is called by the builders before save.
+	activitylog.SummaryValidator = func() func(string) error {
+		validators := activitylogDescSummary.Validators
+		fns := [...]func(string) error{
+			validators[0].(func(string) error),
+			validators[1].(func(string) error),
+		}
+		return func(summary string) error {
+			for _, fn := range fns {
+				if err := fn(summary); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}()
+	// activitylogDescSource is the schema descriptor for source field.
+	activitylogDescSource := activitylogFields[7].Descriptor()
+	// activitylog.SourceValidator is a validator for the "source" field. It is called by the builders before save.
+	activitylog.SourceValidator = func() func(string) error {
+		validators := activitylogDescSource.Validators
+		fns := [...]func(string) error{
+			validators[0].(func(string) error),
+			validators[1].(func(string) error),
+		}
+		return func(source string) error {
+			for _, fn := range fns {
+				if err := fn(source); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}()
+	// activitylogDescMethod is the schema descriptor for method field.
+	activitylogDescMethod := activitylogFields[8].Descriptor()
+	// activitylog.DefaultMethod holds the default value on creation for the method field.
+	activitylog.DefaultMethod = activitylogDescMethod.Default.(string)
+	// activitylog.MethodValidator is a validator for the "method" field. It is called by the builders before save.
+	activitylog.MethodValidator = activitylogDescMethod.Validators[0].(func(string) error)
+	// activitylogDescPath is the schema descriptor for path field.
+	activitylogDescPath := activitylogFields[9].Descriptor()
+	// activitylog.DefaultPath holds the default value on creation for the path field.
+	activitylog.DefaultPath = activitylogDescPath.Default.(string)
+	// activitylog.PathValidator is a validator for the "path" field. It is called by the builders before save.
+	activitylog.PathValidator = activitylogDescPath.Validators[0].(func(string) error)
+	// activitylogDescHTTPStatus is the schema descriptor for http_status field.
+	activitylogDescHTTPStatus := activitylogFields[10].Descriptor()
+	// activitylog.DefaultHTTPStatus holds the default value on creation for the http_status field.
+	activitylog.DefaultHTTPStatus = activitylogDescHTTPStatus.Default.(int)
+	// activitylogDescDurationMs is the schema descriptor for duration_ms field.
+	activitylogDescDurationMs := activitylogFields[11].Descriptor()
+	// activitylog.DefaultDurationMs holds the default value on creation for the duration_ms field.
+	activitylog.DefaultDurationMs = activitylogDescDurationMs.Default.(int64)
+	// activitylogDescRequestID is the schema descriptor for request_id field.
+	activitylogDescRequestID := activitylogFields[12].Descriptor()
+	// activitylog.DefaultRequestID holds the default value on creation for the request_id field.
+	activitylog.DefaultRequestID = activitylogDescRequestID.Default.(string)
+	// activitylog.RequestIDValidator is a validator for the "request_id" field. It is called by the builders before save.
+	activitylog.RequestIDValidator = activitylogDescRequestID.Validators[0].(func(string) error)
+	// activitylogDescDetail is the schema descriptor for detail field.
+	activitylogDescDetail := activitylogFields[13].Descriptor()
+	// activitylog.DefaultDetail holds the default value on creation for the detail field.
+	activitylog.DefaultDetail = activitylogDescDetail.Default.(string)
+	// activitylog.DetailValidator is a validator for the "detail" field. It is called by the builders before save.
+	activitylog.DetailValidator = activitylogDescDetail.Validators[0].(func(string) error)
+	// activitylogDescMetadata is the schema descriptor for metadata field.
+	activitylogDescMetadata := activitylogFields[14].Descriptor()
+	// activitylog.DefaultMetadata holds the default value on creation for the metadata field.
+	activitylog.DefaultMetadata = activitylogDescMetadata.Default.(map[string]interface{})
+	// activitylogDescCreatedAt is the schema descriptor for created_at field.
+	activitylogDescCreatedAt := activitylogFields[15].Descriptor()
+	// activitylog.DefaultCreatedAt holds the default value on creation for the created_at field.
+	activitylog.DefaultCreatedAt = activitylogDescCreatedAt.Default.(func() time.Time)
 	mailboxhiddenmessageFields := schema.MailboxHiddenMessage{}.Fields()
 	_ = mailboxhiddenmessageFields
+	// mailboxhiddenmessageDescAccountID is the schema descriptor for account_id field.
+	mailboxhiddenmessageDescAccountID := mailboxhiddenmessageFields[0].Descriptor()
+	// mailboxhiddenmessage.DefaultAccountID holds the default value on creation for the account_id field.
+	mailboxhiddenmessage.DefaultAccountID = mailboxhiddenmessageDescAccountID.Default.(string)
+	// mailboxhiddenmessage.AccountIDValidator is a validator for the "account_id" field. It is called by the builders before save.
+	mailboxhiddenmessage.AccountIDValidator = mailboxhiddenmessageDescAccountID.Validators[0].(func(string) error)
 	// mailboxhiddenmessageDescGeneration is the schema descriptor for generation field.
-	mailboxhiddenmessageDescGeneration := mailboxhiddenmessageFields[0].Descriptor()
+	mailboxhiddenmessageDescGeneration := mailboxhiddenmessageFields[1].Descriptor()
 	// mailboxhiddenmessage.GenerationValidator is a validator for the "generation" field. It is called by the builders before save.
 	mailboxhiddenmessage.GenerationValidator = func() func(string) error {
 		validators := mailboxhiddenmessageDescGeneration.Validators
@@ -34,7 +217,7 @@ func init() {
 		}
 	}()
 	// mailboxhiddenmessageDescAlias is the schema descriptor for alias field.
-	mailboxhiddenmessageDescAlias := mailboxhiddenmessageFields[1].Descriptor()
+	mailboxhiddenmessageDescAlias := mailboxhiddenmessageFields[2].Descriptor()
 	// mailboxhiddenmessage.AliasValidator is a validator for the "alias" field. It is called by the builders before save.
 	mailboxhiddenmessage.AliasValidator = func() func(string) error {
 		validators := mailboxhiddenmessageDescAlias.Validators
@@ -53,8 +236,14 @@ func init() {
 	}()
 	mailboxmessageFields := schema.MailboxMessage{}.Fields()
 	_ = mailboxmessageFields
+	// mailboxmessageDescAccountID is the schema descriptor for account_id field.
+	mailboxmessageDescAccountID := mailboxmessageFields[0].Descriptor()
+	// mailboxmessage.DefaultAccountID holds the default value on creation for the account_id field.
+	mailboxmessage.DefaultAccountID = mailboxmessageDescAccountID.Default.(string)
+	// mailboxmessage.AccountIDValidator is a validator for the "account_id" field. It is called by the builders before save.
+	mailboxmessage.AccountIDValidator = mailboxmessageDescAccountID.Validators[0].(func(string) error)
 	// mailboxmessageDescGeneration is the schema descriptor for generation field.
-	mailboxmessageDescGeneration := mailboxmessageFields[0].Descriptor()
+	mailboxmessageDescGeneration := mailboxmessageFields[1].Descriptor()
 	// mailboxmessage.GenerationValidator is a validator for the "generation" field. It is called by the builders before save.
 	mailboxmessage.GenerationValidator = func() func(string) error {
 		validators := mailboxmessageDescGeneration.Validators
@@ -72,41 +261,47 @@ func init() {
 		}
 	}()
 	// mailboxmessageDescAliases is the schema descriptor for aliases field.
-	mailboxmessageDescAliases := mailboxmessageFields[2].Descriptor()
+	mailboxmessageDescAliases := mailboxmessageFields[3].Descriptor()
 	// mailboxmessage.DefaultAliases holds the default value on creation for the aliases field.
 	mailboxmessage.DefaultAliases = mailboxmessageDescAliases.Default.([]string)
 	// mailboxmessageDescFromAddress is the schema descriptor for from_address field.
-	mailboxmessageDescFromAddress := mailboxmessageFields[3].Descriptor()
+	mailboxmessageDescFromAddress := mailboxmessageFields[4].Descriptor()
 	// mailboxmessage.DefaultFromAddress holds the default value on creation for the from_address field.
 	mailboxmessage.DefaultFromAddress = mailboxmessageDescFromAddress.Default.(string)
 	// mailboxmessage.FromAddressValidator is a validator for the "from_address" field. It is called by the builders before save.
 	mailboxmessage.FromAddressValidator = mailboxmessageDescFromAddress.Validators[0].(func(string) error)
 	// mailboxmessageDescSubject is the schema descriptor for subject field.
-	mailboxmessageDescSubject := mailboxmessageFields[4].Descriptor()
+	mailboxmessageDescSubject := mailboxmessageFields[5].Descriptor()
 	// mailboxmessage.DefaultSubject holds the default value on creation for the subject field.
 	mailboxmessage.DefaultSubject = mailboxmessageDescSubject.Default.(string)
 	// mailboxmessage.SubjectValidator is a validator for the "subject" field. It is called by the builders before save.
 	mailboxmessage.SubjectValidator = mailboxmessageDescSubject.Validators[0].(func(string) error)
 	// mailboxmessageDescText is the schema descriptor for text field.
-	mailboxmessageDescText := mailboxmessageFields[6].Descriptor()
+	mailboxmessageDescText := mailboxmessageFields[7].Descriptor()
 	// mailboxmessage.DefaultText holds the default value on creation for the text field.
 	mailboxmessage.DefaultText = mailboxmessageDescText.Default.(string)
 	// mailboxmessageDescSafeHTML is the schema descriptor for safe_html field.
-	mailboxmessageDescSafeHTML := mailboxmessageFields[7].Descriptor()
+	mailboxmessageDescSafeHTML := mailboxmessageFields[8].Descriptor()
 	// mailboxmessage.DefaultSafeHTML holds the default value on creation for the safe_html field.
 	mailboxmessage.DefaultSafeHTML = mailboxmessageDescSafeHTML.Default.(string)
 	// mailboxmessageDescCodes is the schema descriptor for codes field.
-	mailboxmessageDescCodes := mailboxmessageFields[8].Descriptor()
+	mailboxmessageDescCodes := mailboxmessageFields[9].Descriptor()
 	// mailboxmessage.DefaultCodes holds the default value on creation for the codes field.
 	mailboxmessage.DefaultCodes = mailboxmessageDescCodes.Default.([]string)
 	// mailboxmessageDescPartnerCodes is the schema descriptor for partner_codes field.
-	mailboxmessageDescPartnerCodes := mailboxmessageFields[9].Descriptor()
+	mailboxmessageDescPartnerCodes := mailboxmessageFields[10].Descriptor()
 	// mailboxmessage.DefaultPartnerCodes holds the default value on creation for the partner_codes field.
 	mailboxmessage.DefaultPartnerCodes = mailboxmessageDescPartnerCodes.Default.([]string)
 	mailboxsyncstateFields := schema.MailboxSyncState{}.Fields()
 	_ = mailboxsyncstateFields
+	// mailboxsyncstateDescAccountID is the schema descriptor for account_id field.
+	mailboxsyncstateDescAccountID := mailboxsyncstateFields[0].Descriptor()
+	// mailboxsyncstate.DefaultAccountID holds the default value on creation for the account_id field.
+	mailboxsyncstate.DefaultAccountID = mailboxsyncstateDescAccountID.Default.(string)
+	// mailboxsyncstate.AccountIDValidator is a validator for the "account_id" field. It is called by the builders before save.
+	mailboxsyncstate.AccountIDValidator = mailboxsyncstateDescAccountID.Validators[0].(func(string) error)
 	// mailboxsyncstateDescKey is the schema descriptor for key field.
-	mailboxsyncstateDescKey := mailboxsyncstateFields[0].Descriptor()
+	mailboxsyncstateDescKey := mailboxsyncstateFields[1].Descriptor()
 	// mailboxsyncstate.KeyValidator is a validator for the "key" field. It is called by the builders before save.
 	mailboxsyncstate.KeyValidator = func() func(string) error {
 		validators := mailboxsyncstateDescKey.Validators
@@ -124,15 +319,15 @@ func init() {
 		}
 	}()
 	// mailboxsyncstateDescStatus is the schema descriptor for status field.
-	mailboxsyncstateDescStatus := mailboxsyncstateFields[1].Descriptor()
+	mailboxsyncstateDescStatus := mailboxsyncstateFields[2].Descriptor()
 	// mailboxsyncstate.DefaultStatus holds the default value on creation for the status field.
 	mailboxsyncstate.DefaultStatus = mailboxsyncstateDescStatus.Default.(map[string]interface{})
 	// mailboxsyncstateDescHighestUID is the schema descriptor for highest_uid field.
-	mailboxsyncstateDescHighestUID := mailboxsyncstateFields[2].Descriptor()
+	mailboxsyncstateDescHighestUID := mailboxsyncstateFields[3].Descriptor()
 	// mailboxsyncstate.DefaultHighestUID holds the default value on creation for the highest_uid field.
 	mailboxsyncstate.DefaultHighestUID = mailboxsyncstateDescHighestUID.Default.(uint64)
 	// mailboxsyncstateDescAllowedAliases is the schema descriptor for allowed_aliases field.
-	mailboxsyncstateDescAllowedAliases := mailboxsyncstateFields[3].Descriptor()
+	mailboxsyncstateDescAllowedAliases := mailboxsyncstateFields[4].Descriptor()
 	// mailboxsyncstate.DefaultAllowedAliases holds the default value on creation for the allowed_aliases field.
 	mailboxsyncstate.DefaultAllowedAliases = mailboxsyncstateDescAllowedAliases.Default.([]string)
 }

@@ -25,6 +25,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Bringbasket/running-tools/internal/platform/activitylog"
 	"github.com/Bringbasket/running-tools/internal/platform/persistence"
 	"github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
@@ -85,9 +86,28 @@ type MailboxService struct {
 	workerMode    string
 	repository    mailboxRepository
 	persistence   *persistence.Service
+	accountID     string
 	lastCache     mailboxCache
 	cacheLoaded   bool
 	lastLoadErr   error
+	logs          *activitylog.Store
+	lastLogState  string
+}
+
+func (s *MailboxService) SetActivityLog(logs *activitylog.Store) { s.logs = logs }
+
+func (s *MailboxService) Clear(ctx context.Context) error {
+	s.syncMu.Lock()
+	defer s.syncMu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.repository.Clear(ctx); err != nil {
+		return err
+	}
+	s.lastCache = normalizedMailboxCache(mailboxCache{})
+	s.cacheLoaded, s.lastLoadErr = true, nil
+	s.notifyRevisionLocked()
+	return nil
 }
 
 func NewMailboxService(stateDir string, session *SessionManager) *MailboxService {
@@ -97,19 +117,25 @@ func NewMailboxService(stateDir string, session *SessionManager) *MailboxService
 		session:       session,
 		wake:          make(chan struct{}, 1),
 		revisionEvent: make(chan struct{}),
+		accountID:     defaultMailAccountID,
 	}
 	service.repository = &jsonMailboxRepository{path: service.path}
 	return service
 }
 
 func NewMailboxServiceWithPersistence(stateDir string, session *SessionManager, persistenceService *persistence.Service) (*MailboxService, error) {
+	return NewMailboxServiceWithPersistenceForAccount(stateDir, defaultMailAccountID, session, persistenceService)
+}
+
+func NewMailboxServiceWithPersistenceForAccount(stateDir, accountID string, session *SessionManager, persistenceService *persistence.Service) (*MailboxService, error) {
 	service := NewMailboxService(stateDir, session)
-	repository, err := newMailboxRepository(service.path, persistenceService)
+	repository, err := newMailboxRepositoryForAccount(service.path, accountID, persistenceService)
 	if err != nil {
 		return nil, err
 	}
 	service.repository = repository
 	service.persistence = persistenceService
+	service.accountID = accountID
 	return service, nil
 }
 func (s *MailboxService) Start() {
@@ -196,8 +222,10 @@ func (s *MailboxService) setWorkerState(running bool, mode string) {
 	s.mu.Unlock()
 }
 func (s *MailboxService) SyncFromSession() error {
+	before := s.Status()
 	aliases, err := s.session.ListAliases(context.Background())
 	if err != nil {
+		s.recordBackgroundSync(before, before, err)
 		return err
 	}
 	addresses := make([]string, 0, len(aliases))
@@ -209,8 +237,43 @@ func (s *MailboxService) SyncFromSession() error {
 			addresses = append(addresses, address)
 		}
 	}
-	_, err = s.RunSync(addresses)
+	status, err := s.RunSync(addresses)
+	s.recordBackgroundSync(before, status, err)
 	return err
+}
+
+func (s *MailboxService) recordBackgroundSync(before, after MailboxStatus, err error) {
+	if s.logs == nil {
+		return
+	}
+	if err != nil {
+		state := "failure:" + safeErrorText(err)
+		s.mu.Lock()
+		duplicate := s.lastLogState == state
+		if !duplicate {
+			s.lastLogState = state
+		}
+		s.mu.Unlock()
+		if duplicate {
+			return
+		}
+		s.logs.Record(context.Background(), activitylog.Input{Category: "mailbox", Action: "mailbox.sync.background",
+			Level: "error", Outcome: "failure", Summary: "后台同步收件箱失败", Source: "background", Detail: safeErrorText(err)})
+		return
+	}
+	if after.Revision == before.Revision && before.LastError == "" {
+		return
+	}
+	s.mu.Lock()
+	previousState := s.lastLogState
+	s.lastLogState = "success"
+	s.mu.Unlock()
+	summary := "后台同步收件箱完成"
+	if before.LastError != "" || strings.HasPrefix(previousState, "failure:") {
+		summary = "后台收件箱同步已恢复"
+	}
+	s.logs.Record(context.Background(), activitylog.Input{Category: "mailbox", Action: "mailbox.sync.background",
+		Summary: summary, Source: "background", Metadata: map[string]any{"revision": after.Revision}})
 }
 func (s *MailboxService) loadLocked() mailboxCache {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -261,7 +324,7 @@ func (s *MailboxService) Messages(alias string, limit int) map[string]any {
 	cache.Status = s.statusWithConfig(cache.Status, cfg)
 	alias = strings.ToLower(strings.TrimSpace(alias))
 	if limit < 1 {
-		limit = 20
+		limit = 10
 	}
 	if limit > 100 {
 		limit = 100
@@ -492,7 +555,7 @@ func (s *MailboxService) RunSync(aliases []string) (MailboxStatus, error) {
 	defer s.syncMu.Unlock()
 	if s.persistence != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		release, acquired, lockErr := s.persistence.AcquireLock(ctx, "mail:imap-sync")
+		release, acquired, lockErr := s.persistence.AcquireLock(ctx, "mail:imap-sync:"+s.accountID)
 		cancel()
 		if lockErr == nil && !acquired {
 			return s.Status(), errors.New("另一实例正在同步收件箱")
@@ -589,9 +652,9 @@ func fetchIMAP(cfg mailboxConfig, aliases []string, previousUIDValidity, afterUI
 	}
 	defer client.Close()
 	if err := client.Login(cfg.Username, cfg.Password).Wait(); err != nil {
-		return nil, 0, afterUID, fmt.Errorf("IMAP 身份验证失败: %w", err)
+		return nil, 0, afterUID, imapLoginError(cfg, err)
 	}
-	defer client.Logout().Wait()
+	defer logoutIMAP(client)
 	selected, err := client.Select(cfg.Mailbox, &imap.SelectOptions{ReadOnly: true}).Wait()
 	if err != nil {
 		return nil, 0, afterUID, fmt.Errorf("IMAP 邮箱选择失败: %w", err)
@@ -738,7 +801,7 @@ func waitForIMAPChange(cfg mailboxConfig, timeout time.Duration, stop <-chan str
 	if err := client.Login(cfg.Username, cfg.Password).Wait(); err != nil {
 		return false, false
 	}
-	defer client.Logout().Wait()
+	defer logoutIMAP(client)
 	if _, err := client.Select(cfg.Mailbox, &imap.SelectOptions{ReadOnly: true}).Wait(); err != nil {
 		return false, false
 	}

@@ -21,6 +21,20 @@ type MailboxSyncStateCreate struct {
 	conflict []sql.ConflictOption
 }
 
+// SetAccountID sets the "account_id" field.
+func (_c *MailboxSyncStateCreate) SetAccountID(v string) *MailboxSyncStateCreate {
+	_c.mutation.SetAccountID(v)
+	return _c
+}
+
+// SetNillableAccountID sets the "account_id" field if the given value is not nil.
+func (_c *MailboxSyncStateCreate) SetNillableAccountID(v *string) *MailboxSyncStateCreate {
+	if v != nil {
+		_c.SetAccountID(*v)
+	}
+	return _c
+}
+
 // SetKey sets the "key" field.
 func (_c *MailboxSyncStateCreate) SetKey(v string) *MailboxSyncStateCreate {
 	_c.mutation.SetKey(v)
@@ -88,6 +102,10 @@ func (_c *MailboxSyncStateCreate) ExecX(ctx context.Context) {
 
 // defaults sets the default values of the builder before save.
 func (_c *MailboxSyncStateCreate) defaults() {
+	if _, ok := _c.mutation.AccountID(); !ok {
+		v := mailboxsyncstate.DefaultAccountID
+		_c.mutation.SetAccountID(v)
+	}
 	if _, ok := _c.mutation.Status(); !ok {
 		v := mailboxsyncstate.DefaultStatus
 		_c.mutation.SetStatus(v)
@@ -104,6 +122,14 @@ func (_c *MailboxSyncStateCreate) defaults() {
 
 // check runs all checks and user-defined validators on the builder.
 func (_c *MailboxSyncStateCreate) check() error {
+	if _, ok := _c.mutation.AccountID(); !ok {
+		return &ValidationError{Name: "account_id", err: errors.New(`ent: missing required field "MailboxSyncState.account_id"`)}
+	}
+	if v, ok := _c.mutation.AccountID(); ok {
+		if err := mailboxsyncstate.AccountIDValidator(v); err != nil {
+			return &ValidationError{Name: "account_id", err: fmt.Errorf(`ent: validator failed for field "MailboxSyncState.account_id": %w`, err)}
+		}
+	}
 	if _, ok := _c.mutation.Key(); !ok {
 		return &ValidationError{Name: "key", err: errors.New(`ent: missing required field "MailboxSyncState.key"`)}
 	}
@@ -148,6 +174,10 @@ func (_c *MailboxSyncStateCreate) createSpec() (*MailboxSyncState, *sqlgraph.Cre
 		_spec = sqlgraph.NewCreateSpec(mailboxsyncstate.Table, sqlgraph.NewFieldSpec(mailboxsyncstate.FieldID, field.TypeInt))
 	)
 	_spec.OnConflict = _c.conflict
+	if value, ok := _c.mutation.AccountID(); ok {
+		_spec.SetField(mailboxsyncstate.FieldAccountID, field.TypeString, value)
+		_node.AccountID = value
+	}
 	if value, ok := _c.mutation.Key(); ok {
 		_spec.SetField(mailboxsyncstate.FieldKey, field.TypeString, value)
 		_node.Key = value
@@ -171,7 +201,7 @@ func (_c *MailboxSyncStateCreate) createSpec() (*MailboxSyncState, *sqlgraph.Cre
 // of the `INSERT` statement. For example:
 //
 //	client.MailboxSyncState.Create().
-//		SetKey(v).
+//		SetAccountID(v).
 //		OnConflict(
 //			// Update the row with the new values
 //			// the was proposed for insertion.
@@ -180,7 +210,7 @@ func (_c *MailboxSyncStateCreate) createSpec() (*MailboxSyncState, *sqlgraph.Cre
 //		// Override some of the fields with custom
 //		// update values.
 //		Update(func(u *ent.MailboxSyncStateUpsert) {
-//			SetKey(v+v).
+//			SetAccountID(v+v).
 //		}).
 //		Exec(ctx)
 func (_c *MailboxSyncStateCreate) OnConflict(opts ...sql.ConflictOption) *MailboxSyncStateUpsertOne {
@@ -215,6 +245,18 @@ type (
 		*sql.UpdateSet
 	}
 )
+
+// SetAccountID sets the "account_id" field.
+func (u *MailboxSyncStateUpsert) SetAccountID(v string) *MailboxSyncStateUpsert {
+	u.Set(mailboxsyncstate.FieldAccountID, v)
+	return u
+}
+
+// UpdateAccountID sets the "account_id" field to the value that was provided on create.
+func (u *MailboxSyncStateUpsert) UpdateAccountID() *MailboxSyncStateUpsert {
+	u.SetExcluded(mailboxsyncstate.FieldAccountID)
+	return u
+}
 
 // SetKey sets the "key" field.
 func (u *MailboxSyncStateUpsert) SetKey(v string) *MailboxSyncStateUpsert {
@@ -308,6 +350,20 @@ func (u *MailboxSyncStateUpsertOne) Update(set func(*MailboxSyncStateUpsert)) *M
 		set(&MailboxSyncStateUpsert{UpdateSet: update})
 	}))
 	return u
+}
+
+// SetAccountID sets the "account_id" field.
+func (u *MailboxSyncStateUpsertOne) SetAccountID(v string) *MailboxSyncStateUpsertOne {
+	return u.Update(func(s *MailboxSyncStateUpsert) {
+		s.SetAccountID(v)
+	})
+}
+
+// UpdateAccountID sets the "account_id" field to the value that was provided on create.
+func (u *MailboxSyncStateUpsertOne) UpdateAccountID() *MailboxSyncStateUpsertOne {
+	return u.Update(func(s *MailboxSyncStateUpsert) {
+		s.UpdateAccountID()
+	})
 }
 
 // SetKey sets the "key" field.
@@ -508,7 +564,7 @@ func (_c *MailboxSyncStateCreateBulk) ExecX(ctx context.Context) {
 //		// Override some of the fields with custom
 //		// update values.
 //		Update(func(u *ent.MailboxSyncStateUpsert) {
-//			SetKey(v+v).
+//			SetAccountID(v+v).
 //		}).
 //		Exec(ctx)
 func (_c *MailboxSyncStateCreateBulk) OnConflict(opts ...sql.ConflictOption) *MailboxSyncStateUpsertBulk {
@@ -575,6 +631,20 @@ func (u *MailboxSyncStateUpsertBulk) Update(set func(*MailboxSyncStateUpsert)) *
 		set(&MailboxSyncStateUpsert{UpdateSet: update})
 	}))
 	return u
+}
+
+// SetAccountID sets the "account_id" field.
+func (u *MailboxSyncStateUpsertBulk) SetAccountID(v string) *MailboxSyncStateUpsertBulk {
+	return u.Update(func(s *MailboxSyncStateUpsert) {
+		s.SetAccountID(v)
+	})
+}
+
+// UpdateAccountID sets the "account_id" field to the value that was provided on create.
+func (u *MailboxSyncStateUpsertBulk) UpdateAccountID() *MailboxSyncStateUpsertBulk {
+	return u.Update(func(s *MailboxSyncStateUpsert) {
+		s.UpdateAccountID()
+	})
 }
 
 // SetKey sets the "key" field.

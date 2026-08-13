@@ -2,16 +2,12 @@ package persistence
 
 import "testing"
 
-func TestLoadConfigDefaultsToJSON(t *testing.T) {
+func TestLoadConfigDefaultsToPostgres(t *testing.T) {
 	t.Setenv("RUNNING_STORAGE_MODE", "")
 	t.Setenv("RUNNING_DATABASE_URL", "")
 	t.Setenv("RUNNING_REDIS_ADDR", "")
-	cfg, err := LoadConfig()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.Mode != StorageJSON || cfg.DatabaseURL != "" || cfg.RedisPrefix != "running-tools:" {
-		t.Fatalf("unexpected defaults: %#v", cfg)
+	if _, err := LoadConfig(); err == nil {
+		t.Fatal("postgres default accepted without database URL")
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Bringbasket/running-tools/internal/platform/activitylog"
 	"github.com/Bringbasket/running-tools/internal/platform/storage"
 )
 
@@ -38,7 +39,11 @@ type AutoRefresh struct {
 	done            chan struct{}
 	running         bool
 	defaultInterval int
+	logs            *activitylog.Store
+	lastLoggedState string
 }
+
+func (service *AutoRefresh) SetActivityLog(logs *activitylog.Store) { service.logs = logs }
 
 func NewAutoRefresh(stateDir string, session *SessionManager) *AutoRefresh {
 	interval := defaultRefreshInterval
@@ -87,6 +92,10 @@ func (service *AutoRefresh) Update(enabled *bool, interval *int) (AutoRefreshCon
 }
 
 func (service *AutoRefresh) Run(ctx context.Context) (map[string]any, error) {
+	return service.run(ctx, "user")
+}
+
+func (service *AutoRefresh) run(ctx context.Context, source string) (map[string]any, error) {
 	status := service.session.Check(ctx)
 	service.mu.Lock()
 	defer service.mu.Unlock()
@@ -109,6 +118,21 @@ func (service *AutoRefresh) Run(ctx context.Context) (map[string]any, error) {
 	}
 	if err := storage.WriteJSON(service.path, persistentAutoRefresh(config), 0o600); err != nil {
 		return nil, err
+	}
+	if service.logs != nil && source == "background" {
+		level, outcome, summary := "info", "success", "Session 自动检测正常"
+		detail := ""
+		if !status.SessionValid || status.NeedsReauth {
+			level, outcome, summary = "error", "failure", "Session 自动检测发现登录失效"
+			if status.LastError != nil {
+				detail = *status.LastError
+			}
+		}
+		if service.lastLoggedState != outcome {
+			service.logs.Record(context.Background(), activitylog.Input{Category: "session", Action: "session.auto_refresh.check",
+				Level: level, Outcome: outcome, Summary: summary, Source: source, Detail: detail})
+			service.lastLoggedState = outcome
+		}
 	}
 	return map[string]any{"autoRefresh": config, "session": status}, nil
 }
@@ -158,7 +182,7 @@ func (service *AutoRefresh) runIfDue() {
 	if config.Enabled && config.RemainingSeconds != nil && *config.RemainingSeconds <= 0 {
 		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 		defer cancel()
-		_, _ = service.Run(ctx)
+		_, _ = service.run(ctx, "background")
 	}
 }
 

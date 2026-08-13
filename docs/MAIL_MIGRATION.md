@@ -17,8 +17,8 @@
 - IMAP Worker 增加持久 UID 游标、IDLE 实时监听和轮询回退，不再每轮覆盖重扫最近邮件。
 - 邮件详情新增清理后的安全 HTML；脚本、表单、附件、远程图片、样式和危险链接不会进入结果。
 
-Go 版目前仍不能称为与对照项目完全等价。主要差距集中在 SQLite 数据模型、旧邮件
-HTML 回填、验证码识别精度和批量创建队列的历史模型。这些差距不会影响隐藏邮箱的
+Go 版目前仍不能称为与对照项目完全等价。主要差距集中在旧邮件 HTML 回填、验证码识别
+精度和批量创建队列的历史模型。这些差距不会影响隐藏邮箱的
 创建、编辑、启停和删除。
 
 ## 功能对照
@@ -42,8 +42,8 @@ HTML 回填、验证码识别精度和批量创建队列的历史模型。这些
 | 单条和批量本地隐藏 | 已实现并修复 | 不删除 IMAP 原邮件；批量操作原子且按 UID 去重 |
 | revision 长轮询 | 已实现 | 使用事件通知唤醒管理和分享 API，不再每 250ms 读取状态文件 |
 | UID 增量同步和 IMAP IDLE | 已实现 | UID 游标持久化；支持 IDLE 时实时监听，不支持时按配置轮询 |
-| SQLite 数据层 | 未完全等价 | Go 继续使用权限为 `0600` 的私有 JSON；对照项目使用 SQLite 事务表 |
-| HTML 回填和缓存修剪 | 部分等价 | 新邮件保存安全 HTML并按数量修剪；旧 JSON 缓存不会主动回填 HTML |
+| PostgreSQL 数据层 | 已实现 | 账号、状态、邮件、分享数据和使用日志均由 PostgreSQL 持久化 |
+| HTML 回填和缓存修剪 | 部分等价 | 新邮件保存安全 HTML并按数量修剪；首次迁移的旧缓存不会主动回填 HTML |
 | 安全 HTML 原邮件视图 | 已实现 | 只保留安全排版与 HTTP(S) 链接，在 sandbox iframe 中显示 |
 | 验证码识别 | 部分等价 | 常见验证码和合作伙伴代码可识别；对照项目有更严格的误报排除规则 |
 
@@ -70,13 +70,13 @@ HTML 回填、验证码识别精度和批量创建队列的历史模型。这些
 ## IMAP 配置
 
 推荐直接进入前端“收件箱”，点击“IMAP 设置”填写账号、应用专用密码、服务器与同步参数，
-可以先测试连接再保存。配置会持久化到 `data/mail/state/mailbox-config.json`，密码不会通过
+可以先测试连接再保存。配置会按账号持久化到 PostgreSQL，密码不会通过
 读取接口回显。服务器环境变量仍作为尚未保存网页配置时的兼容默认值：
 
 ```dotenv
-HME_IMAP_USERNAME=your-mailbox@example.com
+HME_IMAP_USERNAME=your-name@icloud.com
 HME_IMAP_PASSWORD_FILE=/run/secrets/hme-imap-password
-HME_IMAP_HOST=imap.gmail.com
+HME_IMAP_HOST=imap.mail.me.com
 HME_IMAP_PORT=993
 HME_IMAP_MAILBOX=INBOX
 HME_MAIL_SYNC_ENABLED=false
@@ -84,6 +84,9 @@ HME_MAIL_SYNC_POLL_SECONDS=120
 HME_IMAP_LOOKBACK_DAYS=90
 HME_IMAP_CACHE_MAX_MESSAGES=5000
 ```
+
+iCloud Mail 必须使用 `imap.mail.me.com:993` 和 Apple Account 生成的 App 专用密码；Apple ID
+登录密码不能用于 IMAP。Gmail 等其他转发目标应填写对应服务商的 IMAP 主机。
 
 启用 `HME_MAIL_SYNC_ENABLED=true` 后，Go Worker 首次按 `HME_IMAP_LOOKBACK_DAYS` 回看，
 之后只读取已保存 UID 游标之后的新邮件。服务器支持 IDLE 时实时等待新邮件通知，否则按

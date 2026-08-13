@@ -21,6 +21,20 @@ type MailboxHiddenMessageCreate struct {
 	conflict []sql.ConflictOption
 }
 
+// SetAccountID sets the "account_id" field.
+func (_c *MailboxHiddenMessageCreate) SetAccountID(v string) *MailboxHiddenMessageCreate {
+	_c.mutation.SetAccountID(v)
+	return _c
+}
+
+// SetNillableAccountID sets the "account_id" field if the given value is not nil.
+func (_c *MailboxHiddenMessageCreate) SetNillableAccountID(v *string) *MailboxHiddenMessageCreate {
+	if v != nil {
+		_c.SetAccountID(*v)
+	}
+	return _c
+}
+
 // SetGeneration sets the "generation" field.
 func (_c *MailboxHiddenMessageCreate) SetGeneration(v string) *MailboxHiddenMessageCreate {
 	_c.mutation.SetGeneration(v)
@@ -46,6 +60,7 @@ func (_c *MailboxHiddenMessageCreate) Mutation() *MailboxHiddenMessageMutation {
 
 // Save creates the MailboxHiddenMessage in the database.
 func (_c *MailboxHiddenMessageCreate) Save(ctx context.Context) (*MailboxHiddenMessage, error) {
+	_c.defaults()
 	return withHooks(ctx, _c.sqlSave, _c.mutation, _c.hooks)
 }
 
@@ -71,8 +86,24 @@ func (_c *MailboxHiddenMessageCreate) ExecX(ctx context.Context) {
 	}
 }
 
+// defaults sets the default values of the builder before save.
+func (_c *MailboxHiddenMessageCreate) defaults() {
+	if _, ok := _c.mutation.AccountID(); !ok {
+		v := mailboxhiddenmessage.DefaultAccountID
+		_c.mutation.SetAccountID(v)
+	}
+}
+
 // check runs all checks and user-defined validators on the builder.
 func (_c *MailboxHiddenMessageCreate) check() error {
+	if _, ok := _c.mutation.AccountID(); !ok {
+		return &ValidationError{Name: "account_id", err: errors.New(`ent: missing required field "MailboxHiddenMessage.account_id"`)}
+	}
+	if v, ok := _c.mutation.AccountID(); ok {
+		if err := mailboxhiddenmessage.AccountIDValidator(v); err != nil {
+			return &ValidationError{Name: "account_id", err: fmt.Errorf(`ent: validator failed for field "MailboxHiddenMessage.account_id": %w`, err)}
+		}
+	}
 	if _, ok := _c.mutation.Generation(); !ok {
 		return &ValidationError{Name: "generation", err: errors.New(`ent: missing required field "MailboxHiddenMessage.generation"`)}
 	}
@@ -119,6 +150,10 @@ func (_c *MailboxHiddenMessageCreate) createSpec() (*MailboxHiddenMessage, *sqlg
 		_spec = sqlgraph.NewCreateSpec(mailboxhiddenmessage.Table, sqlgraph.NewFieldSpec(mailboxhiddenmessage.FieldID, field.TypeInt))
 	)
 	_spec.OnConflict = _c.conflict
+	if value, ok := _c.mutation.AccountID(); ok {
+		_spec.SetField(mailboxhiddenmessage.FieldAccountID, field.TypeString, value)
+		_node.AccountID = value
+	}
 	if value, ok := _c.mutation.Generation(); ok {
 		_spec.SetField(mailboxhiddenmessage.FieldGeneration, field.TypeString, value)
 		_node.Generation = value
@@ -138,7 +173,7 @@ func (_c *MailboxHiddenMessageCreate) createSpec() (*MailboxHiddenMessage, *sqlg
 // of the `INSERT` statement. For example:
 //
 //	client.MailboxHiddenMessage.Create().
-//		SetGeneration(v).
+//		SetAccountID(v).
 //		OnConflict(
 //			// Update the row with the new values
 //			// the was proposed for insertion.
@@ -147,7 +182,7 @@ func (_c *MailboxHiddenMessageCreate) createSpec() (*MailboxHiddenMessage, *sqlg
 //		// Override some of the fields with custom
 //		// update values.
 //		Update(func(u *ent.MailboxHiddenMessageUpsert) {
-//			SetGeneration(v+v).
+//			SetAccountID(v+v).
 //		}).
 //		Exec(ctx)
 func (_c *MailboxHiddenMessageCreate) OnConflict(opts ...sql.ConflictOption) *MailboxHiddenMessageUpsertOne {
@@ -182,6 +217,18 @@ type (
 		*sql.UpdateSet
 	}
 )
+
+// SetAccountID sets the "account_id" field.
+func (u *MailboxHiddenMessageUpsert) SetAccountID(v string) *MailboxHiddenMessageUpsert {
+	u.Set(mailboxhiddenmessage.FieldAccountID, v)
+	return u
+}
+
+// UpdateAccountID sets the "account_id" field to the value that was provided on create.
+func (u *MailboxHiddenMessageUpsert) UpdateAccountID() *MailboxHiddenMessageUpsert {
+	u.SetExcluded(mailboxhiddenmessage.FieldAccountID)
+	return u
+}
 
 // SetGeneration sets the "generation" field.
 func (u *MailboxHiddenMessageUpsert) SetGeneration(v string) *MailboxHiddenMessageUpsert {
@@ -263,6 +310,20 @@ func (u *MailboxHiddenMessageUpsertOne) Update(set func(*MailboxHiddenMessageUps
 		set(&MailboxHiddenMessageUpsert{UpdateSet: update})
 	}))
 	return u
+}
+
+// SetAccountID sets the "account_id" field.
+func (u *MailboxHiddenMessageUpsertOne) SetAccountID(v string) *MailboxHiddenMessageUpsertOne {
+	return u.Update(func(s *MailboxHiddenMessageUpsert) {
+		s.SetAccountID(v)
+	})
+}
+
+// UpdateAccountID sets the "account_id" field to the value that was provided on create.
+func (u *MailboxHiddenMessageUpsertOne) UpdateAccountID() *MailboxHiddenMessageUpsertOne {
+	return u.Update(func(s *MailboxHiddenMessageUpsert) {
+		s.UpdateAccountID()
+	})
 }
 
 // SetGeneration sets the "generation" field.
@@ -366,6 +427,7 @@ func (_c *MailboxHiddenMessageCreateBulk) Save(ctx context.Context) ([]*MailboxH
 	for i := range _c.builders {
 		func(i int, root context.Context) {
 			builder := _c.builders[i]
+			builder.defaults()
 			var mut Mutator = MutateFunc(func(ctx context.Context, m Mutation) (Value, error) {
 				mutation, ok := m.(*MailboxHiddenMessageMutation)
 				if !ok {
@@ -448,7 +510,7 @@ func (_c *MailboxHiddenMessageCreateBulk) ExecX(ctx context.Context) {
 //		// Override some of the fields with custom
 //		// update values.
 //		Update(func(u *ent.MailboxHiddenMessageUpsert) {
-//			SetGeneration(v+v).
+//			SetAccountID(v+v).
 //		}).
 //		Exec(ctx)
 func (_c *MailboxHiddenMessageCreateBulk) OnConflict(opts ...sql.ConflictOption) *MailboxHiddenMessageUpsertBulk {
@@ -515,6 +577,20 @@ func (u *MailboxHiddenMessageUpsertBulk) Update(set func(*MailboxHiddenMessageUp
 		set(&MailboxHiddenMessageUpsert{UpdateSet: update})
 	}))
 	return u
+}
+
+// SetAccountID sets the "account_id" field.
+func (u *MailboxHiddenMessageUpsertBulk) SetAccountID(v string) *MailboxHiddenMessageUpsertBulk {
+	return u.Update(func(s *MailboxHiddenMessageUpsert) {
+		s.SetAccountID(v)
+	})
+}
+
+// UpdateAccountID sets the "account_id" field to the value that was provided on create.
+func (u *MailboxHiddenMessageUpsertBulk) UpdateAccountID() *MailboxHiddenMessageUpsertBulk {
+	return u.Update(func(s *MailboxHiddenMessageUpsert) {
+		s.UpdateAccountID()
+	})
 }
 
 // SetGeneration sets the "generation" field.

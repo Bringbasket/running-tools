@@ -1,38 +1,29 @@
 # 从 hme-manager 迁移
 
-Go 重构版本采用分阶段迁移方式。在 Go 容器通过 API 和数据验证之前，不要删除或
-停止现有 Python 容器。
+Go 重构版本的生产数据源固定为 PostgreSQL。旧 JSON 只作为一次性导入来源；应用确认导入成功后
+只读写数据库，不会继续双写，也不会删除或改名旧文件。
 
-## 数据层迁移规划
+## 迁移范围
 
-当前迁移分为文件目录迁移和数据库迁移。脚本先把旧 JSON 复制到模块化 `data/` 目录；
-应用在 `dual` 或 `postgres` 模式首次启动时，再将 `mailbox-cache.json` 导入 PostgreSQL。
-导入不会删除或改名旧 JSON，也不会操作其他 Docker 项目。
+- `hme-config.json`、Session、Apple Account、自动刷新、自动创建、批量队列和 IMAP 配置：
+  首次读取时导入 `running_state` JSONB 行。
+- `mailbox-cache.json`：首次启动导入 `mailbox_messages`、`mailbox_hidden_messages` 和
+  `mailbox_sync_states` 的独立记录。
+- `share-links.json`：首次启动导入 `mail_share_links` 和 `mail_share_sessions`，后续不再整包写入。
+- 使用日志：生产直接写入 `activity_logs`，不使用会持续增长的 JSON 文件。
+- `data/system/update-*.json`：保留，供 Go 容器与宿主机更新服务通信，不属于业务持久化。
 
-## 邮件数据库迁移
+## 迁移步骤
 
-1. 备份 `data/` 和 PostgreSQL 命名卷。
-2. 在 `.env` 设置 `RUNNING_STORAGE_MODE=dual`，启动当前项目。
-3. 检查 `/health` 中 `postgres=ok`、`redis=ok`、`storageMode=dual`。
-4. 对比网页邮件数量以及 `mailbox_messages`、`mailbox_hidden_messages` 的行数。
-5. 至少观察一个完整 IMAP 同步周期，确认 JSON 与数据库都正常更新。
-6. 将模式改为 `postgres` 并只重建 `app` 服务；继续保留 JSON 作为回退副本。
+1. 备份旧 `data/` 和 PostgreSQL 数据库或命名卷。
+2. 使用 `scripts/migrate-hme-data.sh` 把旧文件复制到新的模块目录。
+3. 在 `.env` 设置 `RUNNING_STORAGE_MODE=postgres` 和有效的 `RUNNING_DATABASE_URL`。
+4. 启动应用，确认 `/health` 返回 `postgres=ok`、`storageMode=postgres`。
+5. 在前端分别检查 Session、邮箱列表、自动任务、收件箱、分享链接和使用日志。
+6. 查询 PostgreSQL 确认默认账号的数据均带有 `account_id=default`。
+7. 新建第二个邮件账号，确认其 Session、邮箱列表、Worker、IMAP 缓存和日志独立。
 
-如果 PostgreSQL 模式异常，可先切回 `json`；`dual` 模式下 JSON 是读取主源。不要在未
-确认备份前删除命名卷或 `mailbox-cache.json`。
-
-## 数据对应关系
-
-```text
-旧 /data/hme-config.json          -> 新 /data/mail/hme-config.json
-旧 /data/state/hme-session.json   -> 新 /data/mail/state/hme-session.json
-旧 /data/state/session-state.json -> 新 /data/mail/state/session-state.json
-旧 /data/state/auto-refresh.json  -> 新 /data/mail/state/auto-refresh.json
-旧 /data/state/update-*.json      -> 新 /data/system/update-*.json
-```
-
-请对已经停止写入的测试数据副本运行 `scripts/migrate-hme-data.sh`。脚本只复制明确
-列出的文件，不会删除或修改源文件。
+迁移脚本只复制明确列出的文件，不修改源文件：
 
 ```bash
 scripts/migrate-hme-data.sh \
@@ -40,31 +31,20 @@ scripts/migrate-hme-data.sh \
   /www/wwwroot/running-tools/data
 ```
 
-## API 兼容性
+## 清理验证
 
-以下旧接口继续保留：
+- “使用日志 → 清理”执行 `activity_logs` 的账号级 `DELETE`。
+- “收件箱 → 清理缓存”删除当前账号的邮件、隐藏记录和同步状态。
+- 分享弹窗“清理失效”删除当前账号已撤销或过期的链接以及过期会话。
 
-- `/v1/aliases` 和邮箱操作接口；
-- `/v1/session/status`、`/refresh` 和 `/import`；
-- `/v1/auto-refresh` 和 `/run`；
-- `/v1/system/version` 和 `/update`；
-- `/health`。
+这些操作不可撤销，执行前必须确认数据库备份。前端清空数组不算数据清理。
 
-新客户端应使用 `/api/mail/v1/*` 处理邮件功能，使用 `/api/system/*` 处理平台
-功能。
+## API 兼容
 
-## 切换检查清单
+旧 `/v1/*` 接口继续使用 `default` 账号。新客户端使用 `/api/mail/v1/*`，并在账号相关请求中
+发送 `X-Mail-Account-ID`。平台更新接口仍使用 `/api/system/*`。
 
-1. 备份当前数据目录。
-2. 将旧数据复制到新的模块化目录结构。
-3. 在未使用的本机回环端口上启动 Go 容器，例如 `127.0.0.1:8091`。
-4. 对比新旧服务的 Session 状态和邮箱列表响应。
-5. 执行一次不会修改邮箱数据的 Session 检查。
-6. 测试更新请求和状态读取链路。
-7. 检查桌面端和移动端界面。
-8. 全部通过后再将反向代理切换到 Go 服务。
+## 回退
 
-## 回退方式
-
-在切换期间保留旧容器和数据备份。如果新服务出现问题，只需把反向代理上游恢复
-到旧端口；迁移脚本不会更改旧数据，因此不需要执行反向数据转换。
+如果切换后出现问题，将反向代理恢复到旧服务并使用迁移前备份。不要把运行过的新 PostgreSQL
+反向覆盖旧 JSON；两种数据结构没有可靠的自动反向转换。

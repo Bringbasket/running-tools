@@ -21,6 +21,8 @@ import (
 )
 
 func main() {
+	// Local development reads .env; deployed environments continue to override it.
+	_ = platformconfig.LoadEnvFile(".env")
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	config, err := platformconfig.Load()
 	if err != nil {

@@ -6,6 +6,9 @@ import (
 	"entgo.io/ent/dialect/sql"
 )
 
+// ActivityLog is the predicate function for activitylog builders.
+type ActivityLog func(*sql.Selector)
+
 // MailboxHiddenMessage is the predicate function for mailboxhiddenmessage builders.
 type MailboxHiddenMessage func(*sql.Selector)
 

@@ -1,6 +1,7 @@
 package mail
 
 import (
+	"errors"
 	"os"
 	"runtime"
 	"strings"
@@ -127,6 +128,38 @@ func TestMailboxSettingsRejectInvalidHostAndEnabledWithoutCredentials(t *testing
 	base.Enabled = true
 	if _, _, err := normalizeMailboxSettings(base, current); err == nil {
 		t.Fatal("enabled settings without credentials were accepted")
+	}
+}
+
+func TestMailboxSettingsUseICloudDefaultAndCorrectGmailForICloudAddress(t *testing.T) {
+	clearMailboxEnvironment(t)
+	if got := mailboxConfigFromEnv().Host; got != "imap.mail.me.com" {
+		t.Fatalf("default IMAP host = %q, want imap.mail.me.com", got)
+	}
+
+	input := MailboxSettingsInput{
+		Username: "owner@icloud.com", Password: "app-password", Host: "imap.gmail.com",
+		Port: 993, Mailbox: "INBOX", PollSeconds: 120, LookbackDays: 90, CacheMax: 5000,
+	}
+	next, stored, err := normalizeMailboxSettings(input, mailboxConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.Host != "imap.mail.me.com" || stored.Host != "imap.mail.me.com" {
+		t.Fatalf("iCloud host was not corrected: next=%q stored=%q", next.Host, stored.Host)
+	}
+
+	input.Host = "imap.icloud.com"
+	next, _, err = normalizeMailboxSettings(input, mailboxConfig{})
+	if err != nil || next.Host != "imap.mail.me.com" {
+		t.Fatalf("legacy iCloud host was not corrected: host=%q err=%v", next.Host, err)
+	}
+}
+
+func TestIMAPLoginErrorExplainsICloudAppSpecificPassword(t *testing.T) {
+	err := imapLoginError(mailboxConfig{Username: "owner@icloud.com", Host: "imap.mail.me.com", Port: 993}, errors.New("authentication failed"))
+	if !strings.Contains(err.Error(), "App 专用密码") || !strings.Contains(err.Error(), "不能使用 Apple ID 登录密码") {
+		t.Fatalf("unexpected iCloud login error: %v", err)
 	}
 }
 

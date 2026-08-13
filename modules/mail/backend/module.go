@@ -1,22 +1,25 @@
 package mail
 
 import (
+	"context"
 	"net/http"
 	"path/filepath"
 	"sync"
 
 	"github.com/Bringbasket/running-tools/internal/platform/httpx"
 	"github.com/Bringbasket/running-tools/internal/platform/persistence"
+	"github.com/Bringbasket/running-tools/internal/platform/storage"
 )
 
 type Module struct {
-	session    *SessionManager
-	refresh    *AutoRefresh
-	creation   *CreateScheduler
-	queue      *AliasQueue
-	shares     *ShareLinkStore
-	mailbox    *MailboxService
-	createGate *sync.Mutex
+	mu          sync.RWMutex
+	dataDir     string
+	configPath  string
+	stateDir    string
+	persistence *persistence.Service
+	runtimes    map[string]*accountRuntime
+	order       []string
+	started     bool
 }
 
 func NewModule(dataDir, configPath, stateDir string) *Module {
@@ -34,37 +37,54 @@ func NewModuleWithPersistence(dataDir, configPath, stateDir string, persistenceS
 	if stateDir == "" {
 		stateDir = filepath.Join(dataDir, "state")
 	}
-	session := NewSessionManager(configPath, stateDir)
-	gate := &sync.Mutex{}
-	creation := NewCreateScheduler(stateDir, session, gate)
-	queue := NewAliasQueue(stateDir, session, gate)
-	creation.SetBlocked(queue.Active)
-	queue.SetBlocked(creation.Running)
-	mailbox, err := NewMailboxServiceWithPersistence(stateDir, session, persistenceService)
+	if persistenceService != nil && persistenceService.Mode() == persistence.StoragePostgres {
+		storage.ConfigurePostgres(persistenceService.DB(), dataDir, filepath.Dir(configPath), stateDir)
+	}
+	module := &Module{dataDir: dataDir, configPath: configPath, stateDir: stateDir, persistence: persistenceService, runtimes: map[string]*accountRuntime{}}
+	accounts, err := module.loadAccounts(context.Background())
 	if err != nil {
 		return nil, err
 	}
-	return &Module{session: session, refresh: NewAutoRefresh(stateDir, session), creation: creation, queue: queue, shares: NewShareLinkStore(stateDir), mailbox: mailbox, createGate: gate}, nil
+	for _, account := range accounts {
+		runtime, buildErr := module.buildRuntime(account)
+		if buildErr != nil {
+			return nil, buildErr
+		}
+		module.runtimes[account.ID] = runtime
+		module.order = append(module.order, account.ID)
+	}
+	return module, nil
 }
 
 func (module *Module) ID() string { return "mail" }
 
 func (module *Module) RegisterRoutes(mux *http.ServeMux, auth httpx.Middleware) {
-	api := &routeAPI{session: module.session, refresh: module.refresh, queue: module.queue, shares: module.shares, mailbox: module.mailbox, createGate: module.createGate}
-	api.creation = module.creation
+	api := &routeAPI{module: module}
 	api.register(mux, auth, "/api/mail/v1", false)
 	api.register(mux, auth, "/v1", true)
 }
 
 func (module *Module) Start() {
-	module.refresh.Start()
-	module.creation.Start()
-	module.queue.Start()
-	module.mailbox.Start()
+	module.mu.Lock()
+	module.started = true
+	runtimes := make([]*accountRuntime, 0, len(module.runtimes))
+	for _, runtime := range module.runtimes {
+		runtimes = append(runtimes, runtime)
+	}
+	module.mu.Unlock()
+	for _, runtime := range runtimes {
+		startAccountRuntime(runtime)
+	}
 }
 func (module *Module) Stop() {
-	module.refresh.Stop()
-	module.creation.Shutdown()
-	module.queue.Stop()
-	module.mailbox.Stop()
+	module.mu.Lock()
+	module.started = false
+	runtimes := make([]*accountRuntime, 0, len(module.runtimes))
+	for _, runtime := range module.runtimes {
+		runtimes = append(runtimes, runtime)
+	}
+	module.mu.Unlock()
+	for _, runtime := range runtimes {
+		stopAccountRuntime(runtime)
+	}
 }

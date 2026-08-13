@@ -2,9 +2,10 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ChevronLeft, ChevronRight, CircleOff, Clock3, Download, LoaderCircle, MailCheck, MailOpen, MailPlus, Pencil, Play, Power, RefreshCw, Search, Trash2, X } from '../../../../frontend/src/icons'
 import { authState } from '../../../../frontend/src/auth'
+import { mailAccountState } from '../account'
 import { errorMessage } from '../../../../frontend/src/api'
 import { mailAPI } from '../api'
-import type { AliasQueueStatus, CreateScheduleStatus, MailAlias, ShareLink } from '../types'
+import type { CreateScheduleStatus, MailAlias, ShareLink } from '../types'
 import StatusBadge from '../components/StatusBadge.vue'
 
 const aliases = ref<MailAlias[]>([])
@@ -13,13 +14,9 @@ const error = ref('')
 const loadedAt = ref<number | null>(null)
 const query = ref('')
 const state = ref<'all' | 'active' | 'inactive'>('all')
-const workspaceView = ref<'aliases' | 'schedule' | 'queue'>('aliases')
-const pageSize = ref(20)
+const workspaceView = ref<'aliases' | 'schedule'>('aliases')
+const pageSize = ref(10)
 const currentPage = ref(1)
-const createOpen = ref(false)
-const creating = ref(false)
-const label = ref('shopping')
-const note = ref('')
 const pendingID = ref('')
 const editOpen = ref(false)
 const editing = ref<MailAlias | null>(null)
@@ -32,11 +29,6 @@ const shareLinks = ref<ShareLink[]>([])
 const shareExpiry = ref<number | null>(86400)
 const shareLoading = ref(false)
 const shareNotice = ref('')
-const queue = ref<AliasQueueStatus | null>(null)
-const queueCount = ref(5)
-const queueBaseLabel = ref('shopping')
-const queueNote = ref('')
-const queueLoading = ref(false)
 const schedule = ref<CreateScheduleStatus | null>(null)
 const scheduleLoading = ref(false)
 const scheduleSaving = ref(false)
@@ -50,9 +42,6 @@ const scheduleNote = ref('')
 let taskPollTimer: ReturnType<typeof window.setTimeout> | undefined
 let taskPollGeneration = 0
 let previousScheduleRunning = false
-
-const queueFastPollStates = new Set(['queued', 'running'])
-const queueWaitingStates = new Set(['waiting_rate_limit', 'waiting_retry'])
 
 const visible = computed(() => aliases.value.filter((alias) => {
   if (state.value === 'active' && alias.isActive === false) return false
@@ -114,13 +103,6 @@ function nextTaskPollDelay() {
       return Math.max(2500, Math.min(60000, untilNextRun + 500))
     }
   }
-  if (workspaceView.value === 'queue') {
-    if (queueFastPollStates.has(queue.value?.status || '')) return 2500
-    if (queueWaitingStates.has(queue.value?.status || '')) {
-      const untilNextAttempt = (queue.value?.nextAttemptAt || 0) * 1000 - Date.now()
-      return Math.max(2500, Math.min(60000, untilNextAttempt + 500))
-    }
-  }
   return null
 }
 
@@ -133,16 +115,14 @@ function scheduleTaskPolling() {
     if (generation !== taskPollGeneration) return
     taskPollTimer = undefined
     if (workspaceView.value === 'schedule') await loadSchedule()
-    else if (workspaceView.value === 'queue') await loadQueue()
     if (generation === taskPollGeneration) scheduleTaskPolling()
   }, delay)
 }
 
-async function selectWorkspace(view: 'aliases' | 'schedule' | 'queue') {
+async function selectWorkspace(view: 'aliases' | 'schedule') {
   workspaceView.value = view
   clearTaskPolling()
   if (view === 'schedule') await loadSchedule()
-  else if (view === 'queue') await loadQueue()
   scheduleTaskPolling()
 }
 
@@ -197,14 +177,6 @@ function createChannelLabel(value: string | null | undefined) {
   return value === 'apple_account' ? 'Apple Account' : value === 'icloud_web' ? 'iCloud Web' : '尚无记录'
 }
 
-async function create() {
-  if (!label.value.trim()) return
-  creating.value = true; error.value = ''
-  try { aliases.value.unshift(await mailAPI.createAlias(label.value, note.value)); createOpen.value = false; note.value = '' }
-  catch (reason) { error.value = errorMessage(reason) }
-  finally { creating.value = false }
-}
-
 async function runAction(alias: MailAlias, action: 'enable' | 'disable' | 'delete') {
   if (action === 'delete' && !confirm(`确定删除 ${alias.hme}？`)) return
   pendingID.value = alias.anonymousId; error.value = ''
@@ -217,9 +189,15 @@ function openEdit(alias: MailAlias) { editing.value = alias; editLabel.value = a
 async function openShare(alias: MailAlias) { sharingAlias.value = alias; shareOpen.value = true; shareLoading.value = true; shareNotice.value = ''; try { shareLinks.value = (await mailAPI.shareLinks(alias.anonymousId)).links } catch (reason) { error.value = errorMessage(reason) } finally { shareLoading.value = false } }
 async function createShare() { if (!sharingAlias.value) return; shareLoading.value = true; shareNotice.value = ''; try { const created = await mailAPI.createShareLink(sharingAlias.value.anonymousId, shareExpiry.value); shareLinks.value.unshift(created); shareNotice.value = `链接已生成：${location.origin}${created.shareUrl}` } catch (reason) { error.value = errorMessage(reason) } finally { shareLoading.value = false } }
 async function revokeShare(link: ShareLink) { shareLoading.value = true; try { await mailAPI.revokeShareLink(link.id); link.active = false; link.revokedAt = Date.now() / 1000 } catch (reason) { error.value = errorMessage(reason) } finally { shareLoading.value = false } }
-async function loadQueue() { try { queue.value = await mailAPI.aliasQueue() } catch (reason) { error.value = errorMessage(reason) } }
-async function enqueueQueue() { queueLoading.value = true; try { queue.value = await mailAPI.enqueueAliases(queueBaseLabel.value, queueCount.value, queueNote.value, crypto.randomUUID()) } catch (reason) { error.value = errorMessage(reason) } finally { queueLoading.value = false; scheduleTaskPolling() } }
-async function controlQueue(action: 'pause' | 'resume' | 'cancel') { if (!queue.value?.jobId) return; queueLoading.value = true; try { const confirmUncertain = action === 'resume' && queue.value.status === 'needs_attention' && confirm('上次保留结果可能不明确。系统会先检查邮箱列表；若未找到候选地址，是否确认继续创建？'); queue.value = await mailAPI.aliasQueueControl(action, queue.value.jobId, confirmUncertain) } catch (reason) { error.value = errorMessage(reason) } finally { queueLoading.value = false; scheduleTaskPolling() } }
+async function clearInactiveShares() {
+  if (!sharingAlias.value || !window.confirm('永久删除当前账号已撤销或已过期的分享记录？')) return
+  shareLoading.value = true; shareNotice.value = ''
+  try {
+    const result = await mailAPI.clearInactiveShareLinks()
+    shareLinks.value = (await mailAPI.shareLinks(sharingAlias.value.anonymousId)).links
+    shareNotice.value = `已从数据库清理 ${result.deleted} 条失效分享记录`
+  } catch (reason) { error.value = errorMessage(reason) } finally { shareLoading.value = false }
+}
 async function saveEdit() {
   if (!editing.value || !editLabel.value.trim()) return
   editSaving.value = true; error.value = ''
@@ -231,7 +209,7 @@ async function saveEdit() {
 async function exportCSV() {
   error.value = ''
   try {
-    const response = await fetch('/api/mail/v1/aliases/export.csv', { headers: { 'X-API-Key': authState.apiKey } })
+    const response = await fetch('/api/mail/v1/aliases/export.csv', { headers: { 'X-API-Key': authState.apiKey, 'X-Mail-Account-ID': mailAccountState.currentId } })
     if (!response.ok) throw new Error(`导出失败：HTTP ${response.status}`)
     const url = URL.createObjectURL(await response.blob())
     const anchor = document.createElement('a'); anchor.href = url; anchor.download = 'hide-my-email.csv'; anchor.click(); URL.revokeObjectURL(url)
@@ -243,15 +221,22 @@ function formatDate(value?: number) {
   return new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value > 1e12 ? value : value * 1000))
 }
 
+async function handleAccountChange() {
+  currentPage.value = 1
+  await Promise.all([load(), loadSchedule(true)])
+}
+
 onMounted(async () => {
-  await Promise.all([load(), loadSchedule(true), loadQueue()])
+  await Promise.all([load(), loadSchedule(true)])
   document.addEventListener('visibilitychange', handleVisibilityChange)
+  window.addEventListener('mail-account-change', handleAccountChange)
   scheduleTaskPolling()
 })
 
 onBeforeUnmount(() => {
   clearTaskPolling()
   document.removeEventListener('visibilitychange', handleVisibilityChange)
+  window.removeEventListener('mail-account-change', handleAccountChange)
 })
 </script>
 
@@ -259,7 +244,7 @@ onBeforeUnmount(() => {
   <section class="page mail-aliases">
     <div class="page-heading">
       <div><h2>邮箱管理</h2><p>管理 iCloud+ 隐藏邮箱与服务器创建任务</p></div>
-      <div class="page-actions"><button class="button ghost" :disabled="loading" @click="load"><RefreshCw :size="16" :class="{ spin: loading }" />刷新</button><button class="button primary" @click="createOpen = true"><MailPlus :size="17" />创建邮箱</button></div>
+      <div class="page-actions"><button class="button ghost" :disabled="loading" @click="load"><RefreshCw :size="16" :class="{ spin: loading }" />刷新</button></div>
     </div>
 
     <div class="alias-overview" aria-label="邮箱概览">
@@ -273,7 +258,6 @@ onBeforeUnmount(() => {
       <div class="workspace-tabs" role="tablist" aria-label="邮箱管理视图">
         <button :class="{ active: workspaceView === 'aliases' }" role="tab" :aria-selected="workspaceView === 'aliases'" @click="selectWorkspace('aliases')"><MailOpen :size="16" />邮箱列表<span>{{ aliases.length }}</span></button>
         <button :class="{ active: workspaceView === 'schedule' }" role="tab" :aria-selected="workspaceView === 'schedule'" @click="selectWorkspace('schedule')"><Clock3 :size="16" />自动创建<span class="tab-state" :class="{ running: schedule?.enabled || schedule?.running }">{{ schedule?.running ? '执行中' : schedule?.enabled ? '已开启' : '已暂停' }}</span></button>
-        <button :class="{ active: workspaceView === 'queue' }" role="tab" :aria-selected="workspaceView === 'queue'" @click="selectWorkspace('queue')"><MailPlus :size="16" />批量队列<span class="tab-state" :class="{ running: queue?.workerRunning }">{{ queue?.workerRunning ? `${queue.success}/${queue.requested}` : '空闲' }}</span></button>
       </div>
 
       <div v-if="workspaceView === 'aliases'" class="aliases-pane">
@@ -297,7 +281,7 @@ onBeforeUnmount(() => {
                 <td data-label="转发到"><span class="forward-address">{{ alias.forwardToEmail || '—' }}</span></td>
                 <td data-label="状态"><StatusBadge :state="alias.isActive === false ? 'inactive' : 'active'" :label="alias.isActive === false ? '已停用' : '转发中'" /></td>
                 <td data-label="创建时间">{{ formatDate(alias.createTimestamp) }}</td>
-                <td class="row-actions"><LoaderCircle v-if="pendingID === alias.anonymousId" :size="18" class="spin" /><template v-else><button class="icon-button" title="编辑标签和备注" @click="openEdit(alias)"><Pencil :size="16" /></button><button class="icon-button" title="生成分享链接" @click="openShare(alias)"><MailPlus :size="16" /></button><button class="icon-button" :title="alias.isActive === false ? '重新启用邮箱' : '停用邮箱'" @click="runAction(alias, alias.isActive === false ? 'enable' : 'disable')"><Power :size="16" /></button><button class="icon-button danger" title="删除邮箱" @click="runAction(alias, 'delete')"><Trash2 :size="16" /></button></template></td>
+                <td class="row-actions"><LoaderCircle v-if="pendingID === alias.anonymousId" :size="18" class="spin" /><template v-else><a class="icon-button" :href="`/mail/mailbox?alias=${encodeURIComponent(alias.hme)}`" title="查看邮件" :aria-label="`查看 ${alias.hme} 的邮件`"><MailOpen :size="16" /></a><button class="icon-button" title="编辑标签和备注" @click="openEdit(alias)"><Pencil :size="16" /></button><button class="icon-button" title="生成分享链接" @click="openShare(alias)"><MailPlus :size="16" /></button><button class="icon-button" :title="alias.isActive === false ? '重新启用邮箱' : '停用邮箱'" @click="runAction(alias, alias.isActive === false ? 'enable' : 'disable')"><Power :size="16" /></button><button class="icon-button danger" title="删除邮箱" @click="runAction(alias, 'delete')"><Trash2 :size="16" /></button></template></td>
               </tr>
               <tr v-if="!loading && visible.length === 0"><td colspan="6" class="empty-state"><MailOpen :size="28" /><strong>没有符合条件的邮箱</strong><span>调整关键词或状态筛选后重试</span></td></tr>
               <tr v-if="loading && aliases.length === 0"><td colspan="6" class="empty-state"><LoaderCircle :size="22" class="spin" /><strong>正在读取邮箱</strong></td></tr>
@@ -324,29 +308,9 @@ onBeforeUnmount(() => {
         <div class="schedule-meta"><span>本轮成功 {{ schedule?.running ? schedule.currentSuccess : schedule?.lastBatchSuccess || 0 }} / {{ schedule?.running ? schedule.currentTotal : schedule?.lastBatchRequested || batchSize }} 个</span><span v-if="schedule?.lastUsedChannel">最近通道 {{ createChannelLabel(schedule.lastUsedChannel) }}{{ schedule.lastFallbackUsed ? ' · 已自动兜底' : '' }}</span><span v-if="schedule?.lastError" class="schedule-error">{{ schedule.lastError }}</span></div>
       </div>
 
-      <div v-else class="task-pane">
-        <div class="task-header"><div><h3>批量创建队列</h3><span>进度 {{ queue?.success || 0 }} / {{ queue?.requested || queueCount }}</span></div><div class="schedule-actions"><span class="schedule-status" :class="{ active: queue?.status === 'running' || queue?.status === 'queued' }"><i />{{ ({ idle: '空闲', queued: '排队中', running: '创建中', paused: '已暂停', waiting_rate_limit: '限流等待', waiting_retry: '等待重试', needs_attention: '需要确认', completed: '已完成', cancelled: '已取消' } as Record<string, string>)[queue?.status || 'idle'] }}</span><button v-if="queue?.status === 'running' || queue?.status === 'queued' || queue?.status === 'waiting_rate_limit' || queue?.status === 'waiting_retry'" class="button ghost" :disabled="queueLoading" @click="controlQueue('pause')">暂停</button><button v-if="queue?.status === 'paused' || queue?.status === 'needs_attention'" class="button ghost" :disabled="queueLoading" @click="controlQueue('resume')">继续</button><button v-if="queue?.status && !['idle','completed','cancelled'].includes(queue.status)" class="button ghost" :disabled="queueLoading" @click="controlQueue('cancel')">取消</button></div></div>
-        <p v-if="error" class="message error">{{ error }}</p>
-        <div class="schedule-form queue-form">
-          <label class="field"><span>创建数量 <small>1 - 99 个</small></span><input v-model.number="queueCount" type="number" min="1" max="99" /></label>
-          <label class="field"><span>基础标签</span><input v-model="queueBaseLabel" maxlength="100" /></label>
-          <label class="field schedule-note"><span>备注 <small>可留空</small></span><input v-model="queueNote" maxlength="500" /></label>
-          <div class="schedule-save"><span><small v-if="queue?.lastError">{{ queue.lastError }}</small></span><button class="button primary" :disabled="queueLoading || (queue?.status && !['idle','completed','cancelled'].includes(queue.status))" @click="enqueueQueue"><LoaderCircle v-if="queueLoading" :size="15" class="spin" />加入队列</button></div>
-        </div>
-      </div>
     </section>
   </section>
 
-  <Teleport to="body">
-    <div v-if="createOpen" class="dialog-backdrop" @click.self="createOpen = false">
-      <form class="dialog" @submit.prevent="create">
-        <div class="dialog-heading"><div><h2>创建隐藏邮箱</h2></div><button type="button" class="icon-button" title="关闭" @click="createOpen = false"><X :size="18" /></button></div>
-        <label class="field"><span>标签</span><input v-model="label" maxlength="100" required /></label>
-        <label class="field"><span>备注</span><textarea v-model="note" rows="3" maxlength="500" placeholder="可留空" /></label>
-        <div class="dialog-actions"><button type="button" class="button ghost" @click="createOpen = false">取消</button><button class="button primary" :disabled="creating"><LoaderCircle v-if="creating" :size="16" class="spin" />创建</button></div>
-      </form>
-    </div>
-  </Teleport>
   <Teleport to="body">
     <div v-if="editOpen" class="dialog-backdrop" @click.self="editOpen = false">
       <form class="dialog" @submit.prevent="saveEdit">
@@ -360,7 +324,7 @@ onBeforeUnmount(() => {
   <Teleport to="body">
     <div v-if="shareOpen" class="dialog-backdrop" @click.self="shareOpen = false">
       <div class="dialog share-dialog">
-        <div class="dialog-heading"><div><h2>分享收件地址</h2><p>{{ sharingAlias?.hme }}</p></div><button class="icon-button" title="关闭" @click="shareOpen = false"><X :size="18" /></button></div>
+        <div class="dialog-heading"><div><h2>分享收件地址</h2><p>{{ sharingAlias?.hme }}</p></div><div class="dialog-heading-actions"><button class="button ghost danger-action" :disabled="shareLoading || !shareLinks.some((item) => !item.active)" @click="clearInactiveShares"><Trash2 :size="15" />清理失效</button><button class="icon-button" title="关闭" @click="shareOpen = false"><X :size="18" /></button></div></div>
         <label class="field"><span>有效期</span><select v-model="shareExpiry"><option :value="3600">1 小时</option><option :value="86400">1 天</option><option :value="604800">7 天</option><option :value="2592000">30 天</option><option :value="null">永久</option></select></label>
         <button class="button primary" :disabled="shareLoading" @click="createShare"><LoaderCircle v-if="shareLoading" :size="16" class="spin" />生成分享链接</button>
         <p v-if="shareNotice" class="message success">{{ shareNotice }}</p>
@@ -371,6 +335,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.dialog-heading-actions { display: flex; align-items: center; gap: 8px; }
 .alias-overview { display: flex; min-height: 54px; align-items: center; gap: 0; margin-bottom: 16px; padding: 0 16px; color: var(--muted); background: var(--surface); border: 1px solid var(--border); border-radius: 7px; }
 .alias-overview > div { display: flex; min-width: 155px; align-items: center; gap: 8px; padding-right: 24px; font-size: 12px; }
 .alias-overview > div + div { padding-left: 24px; border-left: 1px solid var(--border-soft); }
@@ -422,13 +387,12 @@ onBeforeUnmount(() => {
 .schedule-form .field { margin: 0; }
 .schedule-form .field small { float: right; color: var(--muted); font-size: 10px; font-weight: 500; }
 .schedule-note { grid-column: span 2; }
-.queue-form { grid-template-columns: minmax(160px, .6fr) minmax(220px, 1fr) minmax(240px, 1.4fr); }
 .schedule-save { grid-column: 1 / -1; display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 2px; }
 .schedule-save > span { flex: 1; min-width: 0; color: var(--muted); font-size: 11px; }
 .schedule-save > span small { color: var(--muted); }
 .schedule-meta { display: flex; align-items: center; gap: 16px; margin-top: 14px; color: var(--muted); font-size: 11px; flex-wrap: wrap; }
 .schedule-error { color: var(--danger); max-width: 100%; overflow-wrap: anywhere; }
-@media (max-width: 900px) { .overview-update { display: none; } .alias-overview > div { flex: 1; min-width: 0; } .schedule-form, .queue-form { grid-template-columns: repeat(2, minmax(0, 1fr)); } .schedule-note { grid-column: auto; } }
+@media (max-width: 900px) { .overview-update { display: none; } .alias-overview > div { flex: 1; min-width: 0; } .schedule-form { grid-template-columns: repeat(2, minmax(0, 1fr)); } .schedule-note { grid-column: auto; } }
 @media (max-width: 620px) {
   .alias-overview { padding: 0 10px; }
   .alias-overview > div { min-width: 0; flex-direction: column; gap: 2px; padding: 8px; text-align: center; }
@@ -448,7 +412,7 @@ onBeforeUnmount(() => {
   .task-pane { min-height: 0; padding: 16px; }
   .task-header { align-items: flex-start; flex-direction: column; }
   .schedule-actions { justify-content: flex-start; width: 100%; }
-  .schedule-form, .queue-form { grid-template-columns: minmax(0, 1fr); }
+  .schedule-form { grid-template-columns: minmax(0, 1fr); }
   .schedule-note { grid-column: auto; }
   .schedule-save { align-items: stretch; flex-direction: column; }
   .schedule-save > span { flex: initial; }

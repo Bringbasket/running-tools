@@ -262,12 +262,12 @@ func (_q *MailboxMessageQuery) Clone() *MailboxMessageQuery {
 // Example:
 //
 //	var v []struct {
-//		Generation string `json:"generation,omitempty"`
+//		AccountID string `json:"account_id,omitempty"`
 //		Count int `json:"count,omitempty"`
 //	}
 //
 //	client.MailboxMessage.Query().
-//		GroupBy(mailboxmessage.FieldGeneration).
+//		GroupBy(mailboxmessage.FieldAccountID).
 //		Aggregate(ent.Count()).
 //		Scan(ctx, &v)
 func (_q *MailboxMessageQuery) GroupBy(field string, fields ...string) *MailboxMessageGroupBy {
@@ -285,11 +285,11 @@ func (_q *MailboxMessageQuery) GroupBy(field string, fields ...string) *MailboxM
 // Example:
 //
 //	var v []struct {
-//		Generation string `json:"generation,omitempty"`
+//		AccountID string `json:"account_id,omitempty"`
 //	}
 //
 //	client.MailboxMessage.Query().
-//		Select(mailboxmessage.FieldGeneration).
+//		Select(mailboxmessage.FieldAccountID).
 //		Scan(ctx, &v)
 func (_q *MailboxMessageQuery) Select(fields ...string) *MailboxMessageSelect {
 	_q.ctx.Fields = append(_q.ctx.Fields, fields...)

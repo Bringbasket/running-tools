@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Bringbasket/running-tools/internal/platform/activitylog"
 	"github.com/Bringbasket/running-tools/internal/platform/storage"
 )
 
@@ -65,6 +66,7 @@ type CreateScheduler struct {
 	cancel        context.CancelFunc
 	createGate    *sync.Mutex
 	blocked       func() bool
+	logs          *activitylog.Store
 }
 
 func NewCreateScheduler(stateDir string, session *SessionManager, gates ...*sync.Mutex) *CreateScheduler {
@@ -80,8 +82,9 @@ func NewCreateScheduler(stateDir string, session *SessionManager, gates ...*sync
 	}
 }
 
-func (service *CreateScheduler) SetBlocked(blocked func() bool) { service.blocked = blocked }
-func (service *CreateScheduler) Running() bool                  { return len(service.runLock) > 0 }
+func (service *CreateScheduler) SetBlocked(blocked func() bool)         { service.blocked = blocked }
+func (service *CreateScheduler) SetActivityLog(logs *activitylog.Store) { service.logs = logs }
+func (service *CreateScheduler) Running() bool                          { return len(service.runLock) > 0 }
 
 func (service *CreateScheduler) Status() CreateScheduleConfig {
 	service.mu.Lock()
@@ -282,7 +285,7 @@ func (service *CreateScheduler) runBatch(ctx context.Context, manual bool) {
 
 	for index := 1; index <= config.BatchSize; index++ {
 		if err := ctx.Err(); err != nil {
-			service.finishBatch(err, "任务已停止")
+			service.finishBatch(err, "任务已停止", manual)
 			return
 		}
 		service.setProgress(index, config.BatchSize, config.LastBatchSuccess)
@@ -296,7 +299,7 @@ func (service *CreateScheduler) runBatch(ctx context.Context, manual bool) {
 			} else if isSessionExpired(err) {
 				reason = "Session 已失效，请重新导入"
 			}
-			service.finishBatch(err, reason)
+			service.finishBatch(err, reason, manual)
 			return
 		}
 		service.setLastCreateRoute(created)
@@ -308,12 +311,12 @@ func (service *CreateScheduler) runBatch(ctx context.Context, manual bool) {
 			case <-timer.C:
 			case <-ctx.Done():
 				timer.Stop()
-				service.finishBatch(ctx.Err(), "任务已停止")
+				service.finishBatch(ctx.Err(), "任务已停止", manual)
 				return
 			}
 		}
 	}
-	service.finishBatch(nil, "本轮创建完成")
+	service.finishBatch(nil, "本轮创建完成", manual)
 }
 
 func (service *CreateScheduler) setLastCreateRoute(created map[string]any) {
@@ -338,9 +341,8 @@ func (service *CreateScheduler) setProgress(index, total, success int) {
 	_ = storage.WriteJSON(service.path, persistentCreateConfig(config), 0o600)
 }
 
-func (service *CreateScheduler) finishBatch(err error, reason string) {
+func (service *CreateScheduler) finishBatch(err error, reason string, manual bool) {
 	service.mu.Lock()
-	defer service.mu.Unlock()
 	config := service.loadLocked()
 	config.CurrentIndex, config.CurrentTotal, config.CurrentSuccess = 0, 0, 0
 	config.LastBatchStoppedReason = &reason
@@ -359,6 +361,25 @@ func (service *CreateScheduler) finishBatch(err error, reason string) {
 		config.LastError = nil
 	}
 	_ = storage.WriteJSON(service.path, persistentCreateConfig(config), 0o600)
+	service.mu.Unlock()
+	if service.logs != nil {
+		level, outcome := "info", "success"
+		detail := ""
+		if err != nil {
+			level, outcome = "error", "failure"
+			detail = safeErrorText(err)
+			if errors.Is(err, context.Canceled) || strings.Contains(reason, "限额") {
+				level = "warning"
+			}
+		}
+		source := "background"
+		if manual {
+			source = "user"
+		}
+		service.logs.Record(context.Background(), activitylog.Input{Category: "automation", Action: "alias.schedule.batch",
+			Level: level, Outcome: outcome, Summary: reason, Source: source, Detail: detail,
+			Metadata: map[string]any{"requested": config.LastBatchRequested, "success": config.LastBatchSuccess}})
+	}
 }
 
 func (service *CreateScheduler) loadLocked() CreateScheduleConfig {

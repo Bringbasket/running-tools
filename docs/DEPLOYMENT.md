@@ -5,13 +5,14 @@
 
 ## 基础设施状态
 
-生产环境使用 PostgreSQL 15+ 和 Redis 7+。`compose.server.yml` 为本项目创建独立的
-PostgreSQL、Redis 服务、内部网络和命名卷，数据库与 Redis 均不映射宿主机端口，不会
-操作其他 Compose 项目的容器。邮件 Session 与密码仍保存在 `data/` 文件中。
+生产环境使用 PostgreSQL 15+ 和 Redis 7+。`compose.server.yml` 只创建本项目的应用和
+Redis 服务；PostgreSQL 使用 `.env` 中的 `RUNNING_DATABASE_URL` 连接现有实例，不会创建
+独立数据库容器，也不会操作其他 Compose 项目的容器。邮件 Session、密码和业务数据均保存在
+该 PostgreSQL 实例中。
 
-首次上线设置 `RUNNING_STORAGE_MODE=dual`。应用启动时执行版本化迁移，并将现有
-`mailbox-cache.json` 导入 PostgreSQL；原 JSON 不会删除。核对一段时间后再切换为
-`postgres`。
+首次上线设置 `RUNNING_STORAGE_MODE=postgres` 和有效的 `RUNNING_DATABASE_URL`。应用启动时
+执行内置的版本化迁移，并将现有邮件状态、缓存和分享数据导入 PostgreSQL；迁移完成后不再
+写入业务 JSON 文件。迁移 SQL 由 Go 二进制内嵌执行，不需要单独维护或手工运行 SQL 文件。
 
 应用通过 `go:embed` 嵌入前端静态资源，发布构建规范命令为
 `go build -tags embed ./cmd/server`。当前数据库和缓存预留不改变现有部署命令。
@@ -23,14 +24,20 @@ PostgreSQL、Redis 服务、内部网络和命名卷，数据库与 Redis 均不
 |-- .env
 |-- compose.server.yml
 `-- data/
-    |-- mail/
-    |   |-- hme-config.json
-    |   `-- state/
-    `-- system/
+    |-- mail/                 # 生产业务状态在 PostgreSQL，此处仅保留目录
+    `-- system/               # 更新服务通信文件
 ```
 
-PostgreSQL 和 Redis 数据保存在当前 Compose 项目自动命名的独立卷中，不放入应用源码
-目录，也不会与其他 Compose 项目的同名逻辑卷共用。
+Redis 数据保存在当前 Compose 项目的独立命名卷中，不放入应用源码目录，也不会与其他
+Compose 项目的同名逻辑卷共用。PostgreSQL 数据由已有实例管理。
+
+本地直接运行 Go 服务时，`RUNNING_DATABASE_URL` 可以使用 `127.0.0.1:5432`。如果通过
+本 Compose 启动应用容器，容器内的 `127.0.0.1` 指向容器自身，请将连接串的主机名改为
+`host.docker.internal`（Compose 已配置宿主机网关映射），例如：
+
+```dotenv
+RUNNING_DATABASE_URL=postgres://running_tools:626547@host.docker.internal:5432/running_tools?sslmode=disable
+```
 
 Go 容器不挂载 Docker Socket。网页更新操作只会在 `data/system` 下写入一个小型
 请求文件；由 root 管理的宿主机服务监控该文件，并负责拉取镜像和重启服务。
@@ -94,7 +101,7 @@ systemctl enable --now running-tools-update.path
 镜像，只重新创建 `running-tools` Compose 服务，并等待健康检查。如果新容器未能
 进入健康状态，脚本会恢复上一个镜像。
 
-该脚本使用 `--no-deps app`，只重建当前 Compose 项目的应用容器；PostgreSQL、Redis
+该脚本使用 `--no-deps app`，只重建当前 Compose 项目的应用容器；Redis、已有 PostgreSQL
 以及服务器上的其他 Docker Compose 项目不会随应用版本更新而重建。
 
 检查宿主机单元：
@@ -123,7 +130,7 @@ scripts/migrate-hme-data.sh \
 
 部署后打开“隐藏邮箱”页面，在“自动创建计划”中设置每轮数量、邮箱间隔和执行周期，点击“保存并开启”即可。
 
-任务由 Go 服务的后台 Worker 执行，不依赖宝塔计划任务或浏览器页面。设置持久化在 `data/mail/state/create-schedule.json`，服务重启后会读取并恢复已开启的周期计划。Apple 返回 `-41015` 时本轮提前结束；Session 失效时会自动暂停计划。
+任务由 Go 服务的后台 Worker 执行，不依赖宝塔计划任务或浏览器页面。设置按账号持久化在 PostgreSQL，服务重启后会读取并恢复每个账号已开启的周期计划。Apple 返回 `-41015` 时本轮提前结束；Session 失效时会自动暂停对应账号计划。
 
 ## 常用运维命令
 

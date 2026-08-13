@@ -11,6 +11,8 @@ const (
 	Label = "mailbox_sync_state"
 	// FieldID holds the string denoting the id field in the database.
 	FieldID = "id"
+	// FieldAccountID holds the string denoting the account_id field in the database.
+	FieldAccountID = "account_id"
 	// FieldKey holds the string denoting the key field in the database.
 	FieldKey = "key"
 	// FieldStatus holds the string denoting the status field in the database.
@@ -26,6 +28,7 @@ const (
 // Columns holds all SQL columns for mailboxsyncstate fields.
 var Columns = []string{
 	FieldID,
+	FieldAccountID,
 	FieldKey,
 	FieldStatus,
 	FieldHighestUID,
@@ -43,6 +46,10 @@ func ValidColumn(column string) bool {
 }
 
 var (
+	// DefaultAccountID holds the default value on creation for the "account_id" field.
+	DefaultAccountID string
+	// AccountIDValidator is a validator for the "account_id" field. It is called by the builders before save.
+	AccountIDValidator func(string) error
 	// KeyValidator is a validator for the "key" field. It is called by the builders before save.
 	KeyValidator func(string) error
 	// DefaultStatus holds the default value on creation for the "status" field.
@@ -59,6 +66,11 @@ type OrderOption func(*sql.Selector)
 // ByID orders the results by the id field.
 func ByID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldID, opts...).ToFunc()
+}
+
+// ByAccountID orders the results by the account_id field.
+func ByAccountID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldAccountID, opts...).ToFunc()
 }
 
 // ByKey orders the results by the key field.

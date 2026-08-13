@@ -25,6 +25,7 @@ const mailboxStateKey = "default"
 type mailboxRepository interface {
 	Load(context.Context) (mailboxCache, bool, error)
 	Save(context.Context, mailboxCache) error
+	Clear(context.Context) error
 }
 
 type jsonMailboxRepository struct{ path string }
@@ -42,10 +43,17 @@ func (r *jsonMailboxRepository) Save(_ context.Context, cache mailboxCache) erro
 	return storage.WriteJSON(r.path, cache, 0o600)
 }
 
-type postgresMailboxRepository struct{ client *ent.Client }
+func (r *jsonMailboxRepository) Clear(_ context.Context) error {
+	return storage.WriteJSON(r.path, normalizedMailboxCache(mailboxCache{}), 0o600)
+}
+
+type postgresMailboxRepository struct {
+	client    *ent.Client
+	accountID string
+}
 
 func (r *postgresMailboxRepository) Load(ctx context.Context) (mailboxCache, bool, error) {
-	state, err := r.client.MailboxSyncState.Query().Where(mailboxsyncstate.KeyEQ(mailboxStateKey)).Only(ctx)
+	state, err := r.client.MailboxSyncState.Query().Where(mailboxsyncstate.AccountIDEQ(r.accountID), mailboxsyncstate.KeyEQ(mailboxStateKey)).Only(ctx)
 	if ent.IsNotFound(err) {
 		return normalizedMailboxCache(mailboxCache{}), false, nil
 	}
@@ -64,7 +72,7 @@ func (r *postgresMailboxRepository) Load(ctx context.Context) (mailboxCache, boo
 	cache := mailboxCache{Status: status, HighestUID: uint32(state.HighestUID), AllowedAliases: append([]string(nil), state.AllowedAliases...)}
 	generation := status.MailboxGeneration
 	if generation != "" {
-		rows, err := r.client.MailboxMessage.Query().Where(mailboxmessage.GenerationEQ(generation)).Order(ent.Desc(mailboxmessage.FieldMessageDate), ent.Desc(mailboxmessage.FieldUID)).All(ctx)
+		rows, err := r.client.MailboxMessage.Query().Where(mailboxmessage.AccountIDEQ(r.accountID), mailboxmessage.GenerationEQ(generation)).Order(ent.Desc(mailboxmessage.FieldMessageDate), ent.Desc(mailboxmessage.FieldUID)).All(ctx)
 		if err != nil {
 			return mailboxCache{}, false, fmt.Errorf("load mailbox messages: %w", err)
 		}
@@ -76,7 +84,7 @@ func (r *postgresMailboxRepository) Load(ctx context.Context) (mailboxCache, boo
 				Codes: append([]string(nil), row.Codes...), PartnerCodes: append([]string(nil), row.PartnerCodes...),
 			})
 		}
-		hidden, err := r.client.MailboxHiddenMessage.Query().Where(mailboxhiddenmessage.GenerationEQ(generation)).All(ctx)
+		hidden, err := r.client.MailboxHiddenMessage.Query().Where(mailboxhiddenmessage.AccountIDEQ(r.accountID), mailboxhiddenmessage.GenerationEQ(generation)).All(ctx)
 		if err != nil {
 			return mailboxCache{}, false, fmt.Errorf("load hidden mailbox messages: %w", err)
 		}
@@ -109,23 +117,23 @@ func (r *postgresMailboxRepository) Save(ctx context.Context, cache mailboxCache
 		_ = tx.Rollback()
 		return cause
 	}
-	if err := tx.MailboxSyncState.Create().SetKey(mailboxStateKey).SetStatus(status).SetHighestUID(uint64(cache.HighestUID)).SetAllowedAliases(cache.AllowedAliases).OnConflictColumns(mailboxsyncstate.FieldKey).UpdateNewValues().Exec(ctx); err != nil {
+	if err := tx.MailboxSyncState.Create().SetAccountID(r.accountID).SetKey(mailboxStateKey).SetStatus(status).SetHighestUID(uint64(cache.HighestUID)).SetAllowedAliases(cache.AllowedAliases).OnConflictColumns(mailboxsyncstate.FieldAccountID, mailboxsyncstate.FieldKey).UpdateNewValues().Exec(ctx); err != nil {
 		return rollback(fmt.Errorf("save mailbox sync state: %w", err))
 	}
 
 	generation := cache.Status.MailboxGeneration
 	if generation == "" {
-		if _, err := tx.MailboxMessage.Delete().Exec(ctx); err != nil {
+		if _, err := tx.MailboxMessage.Delete().Where(mailboxmessage.AccountIDEQ(r.accountID)).Exec(ctx); err != nil {
 			return rollback(fmt.Errorf("clear mailbox messages: %w", err))
 		}
-		if _, err := tx.MailboxHiddenMessage.Delete().Exec(ctx); err != nil {
+		if _, err := tx.MailboxHiddenMessage.Delete().Where(mailboxhiddenmessage.AccountIDEQ(r.accountID)).Exec(ctx); err != nil {
 			return rollback(fmt.Errorf("clear hidden mailbox messages: %w", err))
 		}
 	} else {
-		if _, err := tx.MailboxMessage.Delete().Where(mailboxmessage.GenerationNEQ(generation)).Exec(ctx); err != nil {
+		if _, err := tx.MailboxMessage.Delete().Where(mailboxmessage.AccountIDEQ(r.accountID), mailboxmessage.GenerationNEQ(generation)).Exec(ctx); err != nil {
 			return rollback(fmt.Errorf("prune old mailbox generation: %w", err))
 		}
-		if _, err := tx.MailboxHiddenMessage.Delete().Where(mailboxhiddenmessage.GenerationNEQ(generation)).Exec(ctx); err != nil {
+		if _, err := tx.MailboxHiddenMessage.Delete().Where(mailboxhiddenmessage.AccountIDEQ(r.accountID), mailboxhiddenmessage.GenerationNEQ(generation)).Exec(ctx); err != nil {
 			return rollback(fmt.Errorf("prune old hidden generation: %w", err))
 		}
 
@@ -135,15 +143,15 @@ func (r *postgresMailboxRepository) Save(ctx context.Context, cache mailboxCache
 			builders := make([]*ent.MailboxMessageCreate, 0, end-start)
 			for _, message := range cache.Messages[start:end] {
 				messageUIDs = append(messageUIDs, uint64(message.UID))
-				builders = append(builders, tx.MailboxMessage.Create().SetGeneration(generation).SetUID(uint64(message.UID)).SetAliases(message.Aliases).
+				builders = append(builders, tx.MailboxMessage.Create().SetAccountID(r.accountID).SetGeneration(generation).SetUID(uint64(message.UID)).SetAliases(message.Aliases).
 					SetFromAddress(message.From).SetSubject(message.Subject).SetMessageDate(message.Date).SetText(message.Text).
 					SetSafeHTML(message.SafeHTML).SetCodes(message.Codes).SetPartnerCodes(message.PartnerCodes))
 			}
-			if err := tx.MailboxMessage.CreateBulk(builders...).OnConflictColumns(mailboxmessage.FieldGeneration, mailboxmessage.FieldUID).UpdateNewValues().Exec(ctx); err != nil {
+			if err := tx.MailboxMessage.CreateBulk(builders...).OnConflictColumns(mailboxmessage.FieldAccountID, mailboxmessage.FieldGeneration, mailboxmessage.FieldUID).UpdateNewValues().Exec(ctx); err != nil {
 				return rollback(fmt.Errorf("upsert mailbox message batch: %w", err))
 			}
 		}
-		deleteMessages := tx.MailboxMessage.Delete().Where(mailboxmessage.GenerationEQ(generation))
+		deleteMessages := tx.MailboxMessage.Delete().Where(mailboxmessage.AccountIDEQ(r.accountID), mailboxmessage.GenerationEQ(generation))
 		if len(messageUIDs) > 0 {
 			deleteMessages.Where(mailboxmessage.UIDNotIn(messageUIDs...))
 		}
@@ -155,7 +163,7 @@ func (r *postgresMailboxRepository) Save(ctx context.Context, cache mailboxCache
 			return rollback(fmt.Errorf("prune mailbox messages: %w", err))
 		}
 
-		if _, err := tx.MailboxHiddenMessage.Delete().Where(mailboxhiddenmessage.GenerationEQ(generation)).Exec(ctx); err != nil {
+		if _, err := tx.MailboxHiddenMessage.Delete().Where(mailboxhiddenmessage.AccountIDEQ(r.accountID), mailboxhiddenmessage.GenerationEQ(generation)).Exec(ctx); err != nil {
 			return rollback(fmt.Errorf("replace hidden mailbox messages: %w", err))
 		}
 		hiddenBuilders := make([]*ent.MailboxHiddenMessageCreate, 0, min(500, len(cache.Hidden)))
@@ -163,14 +171,14 @@ func (r *postgresMailboxRepository) Save(ctx context.Context, cache mailboxCache
 			if len(hiddenBuilders) == 0 {
 				return nil
 			}
-			err := tx.MailboxHiddenMessage.CreateBulk(hiddenBuilders...).OnConflictColumns(mailboxhiddenmessage.FieldGeneration, mailboxhiddenmessage.FieldAlias, mailboxhiddenmessage.FieldUID).UpdateNewValues().Exec(ctx)
+			err := tx.MailboxHiddenMessage.CreateBulk(hiddenBuilders...).OnConflictColumns(mailboxhiddenmessage.FieldAccountID, mailboxhiddenmessage.FieldGeneration, mailboxhiddenmessage.FieldAlias, mailboxhiddenmessage.FieldUID).UpdateNewValues().Exec(ctx)
 			hiddenBuilders = hiddenBuilders[:0]
 			return err
 		}
 		for _, key := range cache.Hidden {
 			alias, uid, ok := parseMessageKey(generation, key)
 			if ok {
-				hiddenBuilders = append(hiddenBuilders, tx.MailboxHiddenMessage.Create().SetGeneration(generation).SetAlias(alias).SetUID(uint64(uid)))
+				hiddenBuilders = append(hiddenBuilders, tx.MailboxHiddenMessage.Create().SetAccountID(r.accountID).SetGeneration(generation).SetAlias(alias).SetUID(uint64(uid)))
 			}
 			if len(hiddenBuilders) == 500 {
 				if err := flushHidden(); err != nil {
@@ -186,6 +194,24 @@ func (r *postgresMailboxRepository) Save(ctx context.Context, cache mailboxCache
 		return fmt.Errorf("commit mailbox transaction: %w", err)
 	}
 	return nil
+}
+
+func (r *postgresMailboxRepository) Clear(ctx context.Context) error {
+	tx, err := r.client.Tx(ctx)
+	if err != nil {
+		return err
+	}
+	rollback := func(cause error) error { _ = tx.Rollback(); return cause }
+	if _, err := tx.MailboxHiddenMessage.Delete().Where(mailboxhiddenmessage.AccountIDEQ(r.accountID)).Exec(ctx); err != nil {
+		return rollback(err)
+	}
+	if _, err := tx.MailboxMessage.Delete().Where(mailboxmessage.AccountIDEQ(r.accountID)).Exec(ctx); err != nil {
+		return rollback(err)
+	}
+	if _, err := tx.MailboxSyncState.Delete().Where(mailboxsyncstate.AccountIDEQ(r.accountID)).Exec(ctx); err != nil {
+		return rollback(err)
+	}
+	return tx.Commit()
 }
 
 type dualMailboxRepository struct {
@@ -207,12 +233,23 @@ func (r *dualMailboxRepository) Save(ctx context.Context, cache mailboxCache) er
 	return nil
 }
 
+func (r *dualMailboxRepository) Clear(ctx context.Context) error {
+	if err := r.json.Clear(ctx); err != nil {
+		return err
+	}
+	return r.postgres.Clear(ctx)
+}
+
 func newMailboxRepository(path string, service *persistence.Service) (mailboxRepository, error) {
+	return newMailboxRepositoryForAccount(path, defaultMailAccountID, service)
+}
+
+func newMailboxRepositoryForAccount(path, accountID string, service *persistence.Service) (mailboxRepository, error) {
 	jsonRepository := &jsonMailboxRepository{path: path}
 	if service == nil || service.Mode() == persistence.StorageJSON {
 		return jsonRepository, nil
 	}
-	postgresRepository := &postgresMailboxRepository{client: service.Ent()}
+	postgresRepository := &postgresMailboxRepository{client: service.Ent(), accountID: accountID}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	if service.Mode() == persistence.StorageDual {

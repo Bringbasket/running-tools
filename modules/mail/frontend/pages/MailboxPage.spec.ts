@@ -4,6 +4,7 @@ import MailboxPage from './MailboxPage.vue'
 
 const mocks = vi.hoisted(() => ({
   mailboxRecent: vi.fn(),
+  mailboxMessages: vi.fn(),
   mailboxWait: vi.fn(),
   mailboxMessage: vi.fn(),
   mailboxSettings: vi.fn(),
@@ -14,6 +15,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('../api', () => ({
   mailAPI: {
     mailboxRecent: mocks.mailboxRecent,
+    mailboxMessages: mocks.mailboxMessages,
     mailboxWait: mocks.mailboxWait,
     mailboxMessage: mocks.mailboxMessage,
     mailboxSettings: mocks.mailboxSettings,
@@ -53,8 +55,8 @@ describe('收件箱页面', () => {
     const wrapper = mount(MailboxPage, { attachTo: document.body })
     await flushPromises()
 
-    expect(wrapper.findAll('tbody tr')).toHaveLength(20)
-    expect(wrapper.get('.pagination-actions strong').text()).toBe('第 1 / 3 页')
+    expect(wrapper.findAll('tbody tr')).toHaveLength(10)
+    expect(wrapper.get('.pagination-actions strong').text()).toBe('第 1 / 5 页')
     expect(mocks.mailboxWait).toHaveBeenCalledWith(7)
 
     await wrapper.get('.page-size select').setValue('50')
@@ -76,6 +78,29 @@ describe('收件箱页面', () => {
     expect(document.body.querySelector('iframe.mail-html')?.getAttribute('sandbox')).toContain('allow-popups')
 
     wrapper.unmount()
+  })
+
+  it('从邮箱列表进入时只读取指定隐藏邮箱的邮件', async () => {
+    vi.clearAllMocks()
+    const previousURL = window.location.href
+    window.history.pushState({}, '', '/mail/mailbox?alias=target%40icloud.com')
+    mocks.mailboxMessages.mockResolvedValue({
+      configured: true,
+      alias: 'target@icloud.com',
+      messages: messages(1),
+      sync: { configured: true, enabled: true, workerRunning: true, syncMode: 'idle', revision: 8, lastSyncAt: 1786500000 },
+    })
+    mocks.mailboxWait.mockImplementation(() => new Promise(() => {}))
+
+    const wrapper = mount(MailboxPage, { attachTo: document.body })
+    await flushPromises()
+
+    expect(mocks.mailboxMessages).toHaveBeenCalledWith('target@icloud.com', 100)
+    expect(mocks.mailboxRecent).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('当前地址：target@icloud.com')
+
+    wrapper.unmount()
+    window.history.replaceState({}, '', previousURL)
   })
 
   it('从前端保存 IMAP 设置且不回填已有密码', async () => {
@@ -119,6 +144,30 @@ describe('收件箱页面', () => {
     expect(document.body.querySelector('.mailbox-settings-dialog')).toBeNull()
     expect(wrapper.text()).toContain('IMAP 设置已保存')
 
+    wrapper.unmount()
+  })
+
+  it('为 iCloud 账号纠正错误的 Gmail 服务器', async () => {
+    mocks.mailboxRecent.mockResolvedValue({
+      days: 3, messages: [],
+      sync: { configured: false, enabled: false, workerRunning: false, syncMode: 'disabled', revision: 0, lastSyncAt: null },
+    })
+    mocks.mailboxWait.mockImplementation(() => new Promise(() => {}))
+    mocks.mailboxSettings.mockResolvedValue({
+      username: 'owner@icloud.com', host: 'imap.icloud.com', port: 993, mailbox: 'INBOX',
+      enabled: false, pollSeconds: 120, lookbackDays: 90, cacheMax: 5000,
+      passwordConfigured: false, source: 'saved',
+    })
+
+    const wrapper = mount(MailboxPage, { attachTo: document.body })
+    await flushPromises()
+    await wrapper.findAll('button').find((button) => button.text().includes('IMAP 设置'))!.trigger('click')
+    await flushPromises()
+
+    const dialog = document.body.querySelector<HTMLElement>('.mailbox-settings-dialog')!
+    const host = Array.from(dialog.querySelectorAll<HTMLInputElement>('input')).find((input) => input.placeholder === 'imap.mail.me.com')
+    expect(host?.value).toBe('imap.mail.me.com')
+    expect(dialog.textContent).toContain('不能使用 Apple ID 登录密码')
     wrapper.unmount()
   })
 })
