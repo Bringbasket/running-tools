@@ -5,12 +5,12 @@
 
 ## 基础设施状态
 
-生产环境使用 PostgreSQL 15+ 和 Redis 7+。`compose.server.yml` 只创建本项目的应用和
-Redis 服务；PostgreSQL 使用 `.env` 中的 `RUNNING_DATABASE_URL` 连接现有实例，不会创建
-独立数据库容器，也不会操作其他 Compose 项目的容器。邮件 Session、密码和业务数据均保存在
-该 PostgreSQL 实例中。
+生产环境使用 PostgreSQL 15+ 和 Redis 7+。`compose.server.yml` 只创建本项目的应用、Redis
+和 PostgreSQL 服务，使用独立的容器、网络和数据卷，不会操作其他 Compose 项目的容器。
+邮件 Session、密码和业务数据均保存在本项目 PostgreSQL 数据卷中。
 
-首次上线设置 `RUNNING_STORAGE_MODE=postgres` 和有效的 `RUNNING_DATABASE_URL`。应用启动时
+首次上线设置 `RUNNING_STORAGE_MODE=postgres` 和 `RUNNING_POSTGRES_PASSWORD`。Compose 会在
+应用容器内使用 `postgres` 服务生成数据库连接串。应用启动时
 执行内置的版本化迁移，并将现有邮件状态、缓存和分享数据导入 PostgreSQL；迁移完成后不再
 写入业务 JSON 文件。迁移 SQL 由 Go 二进制内嵌执行，不需要单独维护或手工运行 SQL 文件。
 
@@ -28,15 +28,15 @@ Redis 服务；PostgreSQL 使用 `.env` 中的 `RUNNING_DATABASE_URL` 连接现�
     `-- system/               # 更新服务通信文件
 ```
 
-Redis 数据保存在当前 Compose 项目的独立命名卷中，不放入应用源码目录，也不会与其他
-Compose 项目的同名逻辑卷共用。PostgreSQL 数据由已有实例管理。
+Redis 和 PostgreSQL 数据保存在当前 Compose 项目的独立命名卷中，不放入应用源码目录，也
+不会与其他 Compose 项目的同名逻辑卷共用。
 
-本地直接运行 Go 服务时，`RUNNING_DATABASE_URL` 可以使用 `127.0.0.1:5432`。如果通过
-本 Compose 启动应用容器，容器内的 `127.0.0.1` 指向容器自身，请将连接串的主机名改为
-`host.docker.internal`（Compose 已配置宿主机网关映射），例如：
+本地直接运行 Go 服务时，`RUNNING_DATABASE_URL` 可以使用 `127.0.0.1:5432`。使用本
+Compose 时应用会自动连接内部的 `postgres:5432`，不需要把 PostgreSQL 暴露到宿主机。
+若接入外部数据库，请显式设置完整连接串，例如：
 
 ```dotenv
-RUNNING_DATABASE_URL=postgres://running_tools:626547@host.docker.internal:5432/running_tools?sslmode=disable
+RUNNING_DATABASE_URL=postgres://running_tools:password@host.docker.internal:5432/running_tools?sslmode=disable
 ```
 
 Go 容器不挂载 Docker Socket。网页更新操作只会在 `data/system` 下写入一个小型

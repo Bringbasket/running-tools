@@ -6,10 +6,9 @@ services:
     env_file:
       - .env
     environment:
-      # PostgreSQL is supplied by the existing host/service through .env.
-      # Do not add a project-owned database container here.
       RUNNING_REDIS_ADDR: redis:6379
       RUNNING_REDIS_PASSWORD: ${RUNNING_REDIS_PASSWORD:?Set RUNNING_REDIS_PASSWORD in .env}
+      RUNNING_DATABASE_URL: postgres://running_tools:${RUNNING_POSTGRES_PASSWORD:?Set RUNNING_POSTGRES_PASSWORD in .env}@postgres:5432/running_tools?sslmode=disable
     ports:
       - "127.0.0.1:${RUNNING_HOST_PORT:-8091}:8000"
     extra_hosts:
@@ -30,6 +29,8 @@ services:
       retries: 4
       start_period: 10s
     depends_on:
+      postgres:
+        condition: service_healthy
       redis:
         condition: service_started
     networks:
@@ -52,8 +53,28 @@ services:
     networks:
       - running-tools-internal
 
+  postgres:
+    image: postgres:15-alpine
+    container_name: running-tools-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: running_tools
+      POSTGRES_USER: running_tools
+      POSTGRES_PASSWORD: ${RUNNING_POSTGRES_PASSWORD:?Set RUNNING_POSTGRES_PASSWORD in .env}
+    volumes:
+      - running-tools-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U running_tools -d running_tools"]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+      start_period: 10s
+    networks:
+      - running-tools-internal
+
 volumes:
   running-tools-redis:
+  running-tools-postgres:
 
 networks:
   running-tools-internal:
