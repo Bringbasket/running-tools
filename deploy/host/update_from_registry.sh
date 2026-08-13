@@ -90,7 +90,7 @@ if [ -n "$request_file" ]; then
 fi
 case "$request_action" in check|update) ;; *) echo "unexpected request action: $request_action" >&2; exit 1 ;; esac
 
-image="$(compose config --images | head -n 1)"
+image="$(compose config --images | awk '$1 ~ /^ghcr[.]io\/bringbasket\/running-tools:/ { print; exit }')"
 case "$image" in ghcr.io/bringbasket/running-tools:*) ;; *) echo "unexpected image: $image" >&2; exit 1 ;; esac
 container="$(compose ps -q app 2>/dev/null || true)"
 if [ -n "$container" ]; then
