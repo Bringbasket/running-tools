@@ -82,6 +82,7 @@ X-Mail-Account-ID: default
 | GET/POST | `/api/mail/v1/alias-queue` | 查看或创建持久化批量队列 |
 | POST | `/api/mail/v1/alias-queue/{pause,resume,cancel}` | 控制批量队列 |
 | GET/POST | `/api/mail/v1/aliases/{id}/share-links` | 管理只读分享链接 |
+| POST | `/api/mail/v1/aliases/batch-share-links` | 按创建时间从早到晚批量生成取件链接 |
 | POST | `/api/mail/v1/share-links/{id}/revoke` | 撤销分享链接 |
 | POST | `/api/mail/v1/share-links/clear-inactive` | 永久清理当前账号失效分享记录 |
 | GET | `/api/mail/v1/mail/messages?alias=...` | 读取指定隐藏邮箱的邮件缓存 |
@@ -94,6 +95,15 @@ X-Mail-Account-ID: default
 | POST | `/api/mail/v1/mail/messages/hide-batch` | 批量从本地缓存隐藏邮件 |
 | POST | `/api/mail/v1/mail/messages/clear` | 永久清理当前账号的 SQL 邮件缓存 |
 | GET | `/api/mail/v1/mail/sync/wait` | 等待缓存 revision 变化 |
+
+批量取件接口请求体为 `{ "count": 5, "expiresInSeconds": 86400 }`。`count` 范围为 1-750，
+只选择启用中的隐藏邮箱，按邮箱创建时间从早到晚排序；创建时间缺失的邮箱排在最后。
+可用邮箱不足时返回 `INSUFFICIENT_ALIASES`，不会生成部分结果。`expiresInSeconds` 可为 `null`
+表示永久，也可以传 300 至 31536000 秒之间的自定义值。响应 `data.items` 中每项包含
+`alias`、`shareUrl` 和有效期；原始 token 只在创建响应返回，数据库只保存摘要和哈希。
+
+分享页面的 `/share/v1/messages?full=1` 会直接返回当前链接可见邮件正文，用于页面内展示；
+不带 `full=1` 时仍返回摘要，单封详情接口继续兼容。
 
 删除母号会先停止该账号的 Session 自动刷新、自动创建、批量队列和 IMAP Worker，再永久清理
 PostgreSQL 中对应的 Session/任务状态、邮件缓存、分享链接和使用日志。默认账号 `default`

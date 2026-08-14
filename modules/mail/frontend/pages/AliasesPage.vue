@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { ChevronLeft, ChevronRight, CircleOff, Clock3, Download, LoaderCircle, MailCheck, MailOpen, MailPlus, Pencil, Play, Power, RefreshCw, Search, Trash2 } from '../../../../frontend/src/icons'
+import { ChevronLeft, ChevronRight, CircleOff, Clock3, Copy, Download, LoaderCircle, MailCheck, MailOpen, MailPlus, Pencil, Play, Power, RefreshCw, Search, Trash2 } from '../../../../frontend/src/icons'
 import { authState } from '../../../../frontend/src/auth'
 import { mailAccountState } from '../account'
 import { errorMessage } from '../../../../frontend/src/api'
@@ -8,7 +8,7 @@ import AppDialog from '../../../../frontend/src/components/AppDialog.vue'
 import AsyncState from '../../../../frontend/src/components/AsyncState.vue'
 import { showToast } from '../../../../frontend/src/toast'
 import { mailAPI } from '../api'
-import type { CreateScheduleStatus, MailAlias, ShareLink } from '../types'
+import type { BatchShareLinkItem, CreateScheduleStatus, MailAlias, ShareLink } from '../types'
 import StatusBadge from '../components/StatusBadge.vue'
 
 const aliases = ref<MailAlias[]>([])
@@ -34,6 +34,15 @@ const shareExpiry = ref<number | null>(86400)
 const shareLoading = ref(false)
 const shareNotice = ref('')
 const shareError = ref('')
+const shareCreatedURL = ref('')
+const copiedShareID = ref('')
+const batchShareOpen = ref(false)
+const batchShareCount = ref(5)
+const batchShareExpiryPreset = ref<'3600' | '86400' | '604800' | '2592000' | 'never' | 'custom'>('86400')
+const batchShareExpiryAt = ref('')
+const batchShareResults = ref<BatchShareLinkItem[]>([])
+const batchShareLoading = ref(false)
+const batchShareError = ref('')
 const clearSharesOpen = ref(false)
 const clearSharesError = ref('')
 const deleteTarget = ref<MailAlias | null>(null)
@@ -212,8 +221,49 @@ async function performAliasAction(alias: MailAlias, action: 'enable' | 'disable'
 }
 
 function openEdit(alias: MailAlias) { editing.value = alias; editLabel.value = alias.label || ''; editNote.value = alias.note || ''; editError.value = ''; editOpen.value = true }
-async function openShare(alias: MailAlias) { sharingAlias.value = alias; shareOpen.value = true; shareLoading.value = true; shareNotice.value = ''; shareError.value = ''; try { shareLinks.value = (await mailAPI.shareLinks(alias.anonymousId)).links } catch (reason) { shareError.value = errorMessage(reason) } finally { shareLoading.value = false } }
-async function createShare() { if (!sharingAlias.value) return; shareLoading.value = true; shareNotice.value = ''; shareError.value = ''; try { const created = await mailAPI.createShareLink(sharingAlias.value.anonymousId, shareExpiry.value); shareLinks.value.unshift(created); shareNotice.value = `链接已生成：${location.origin}${created.shareUrl}` } catch (reason) { shareError.value = errorMessage(reason) } finally { shareLoading.value = false } }
+async function openShare(alias: MailAlias) { sharingAlias.value = alias; shareOpen.value = true; shareLoading.value = true; shareNotice.value = ''; shareCreatedURL.value = ''; shareError.value = ''; try { shareLinks.value = (await mailAPI.shareLinks(alias.anonymousId)).links } catch (reason) { shareError.value = errorMessage(reason) } finally { shareLoading.value = false } }
+async function createShare() { if (!sharingAlias.value) return; shareLoading.value = true; shareNotice.value = ''; shareCreatedURL.value = ''; shareError.value = ''; try { const created = await mailAPI.createShareLink(sharingAlias.value.anonymousId, shareExpiry.value); shareLinks.value.unshift(created); shareCreatedURL.value = fullShareURL(created.shareUrl); shareNotice.value = '链接已生成，可复制后分享给收件人' } catch (reason) { shareError.value = errorMessage(reason) } finally { shareLoading.value = false } }
+function fullShareURL(path?: string) { return path ? new URL(path, location.origin).toString() : '' }
+async function copyShareURL(url: string, id: string) {
+  if (!url) return
+  try {
+    await navigator.clipboard.writeText(url)
+    copiedShareID.value = id
+    showToast('取件地址已复制', 'success')
+    window.setTimeout(() => { if (copiedShareID.value === id) copiedShareID.value = '' }, 1600)
+  } catch {
+    const message = '复制失败，请手动选择地址复制'
+    shareError.value = message
+    batchShareError.value = message
+  }
+}
+function batchExpirySeconds() {
+  if (batchShareExpiryPreset.value === 'never') return null
+  if (batchShareExpiryPreset.value === 'custom') {
+    const timestamp = new Date(batchShareExpiryAt.value).getTime()
+    if (!Number.isFinite(timestamp)) throw new Error('请选择有效的失效时间')
+    const seconds = Math.ceil((timestamp - Date.now()) / 1000)
+    if (seconds < 300 || seconds > 365 * 24 * 60 * 60) throw new Error('自定义失效时间必须在 5 分钟至 365 天内')
+    return seconds
+  }
+  return Number(batchShareExpiryPreset.value)
+}
+function openBatchShare() { batchShareOpen.value = true; batchShareError.value = ''; batchShareResults.value = []; batchShareCount.value = Math.min(5, Math.max(1, activeCount.value)); batchShareExpiryPreset.value = '86400'; batchShareExpiryAt.value = '' }
+function closeBatchShare() { if (!batchShareLoading.value) batchShareOpen.value = false }
+async function createBatchShare() {
+  batchShareLoading.value = true; batchShareError.value = ''
+  try {
+    if (!Number.isInteger(batchShareCount.value) || batchShareCount.value < 1 || batchShareCount.value > 750) throw new Error('邮箱数量必须是 1 到 750 之间的整数')
+    batchShareResults.value = (await mailAPI.createBatchShareLinks(batchShareCount.value, batchExpirySeconds())).items
+  } catch (reason) { batchShareError.value = errorMessage(reason) }
+  finally { batchShareLoading.value = false }
+}
+function downloadBatchShareTXT() {
+  if (!batchShareResults.value.length) return
+  const content = batchShareResults.value.map((item) => `${item.alias}----${fullShareURL(item.shareUrl)}`).join('\n')
+  const url = URL.createObjectURL(new Blob([content], { type: 'text/plain;charset=utf-8' }))
+  const anchor = document.createElement('a'); anchor.href = url; anchor.download = 'hme-retrieval-links.txt'; anchor.click(); URL.revokeObjectURL(url)
+}
 async function revokeShare(link: ShareLink) { shareLoading.value = true; shareError.value = ''; try { await mailAPI.revokeShareLink(link.id); link.active = false; link.revokedAt = Date.now() / 1000; showToast('分享链接已撤销') } catch (reason) { shareError.value = errorMessage(reason) } finally { shareLoading.value = false } }
 function openClearShares() { clearSharesError.value = ''; shareOpen.value = false; clearSharesOpen.value = true }
 function closeClearShares() { if (shareLoading.value) return; clearSharesOpen.value = false; shareOpen.value = Boolean(sharingAlias.value) }
@@ -295,6 +345,7 @@ onBeforeUnmount(() => {
         <div class="list-toolbar">
           <label class="search-field"><Search :size="16" /><input v-model="query" placeholder="搜索邮箱、标签、备注或转发地址" /></label>
           <div class="segmented" aria-label="状态筛选"><button v-for="option in ['all', 'active', 'inactive'] as const" :key="option" :class="{ active: state === option }" @click="state = option">{{ { all: '全部', active: '启用', inactive: '停用' }[option] }}</button></div>
+          <button class="button ghost export-button" title="批量取件" @click="openBatchShare"><MailPlus :size="16" /><span>批量取件</span></button>
           <button class="button ghost export-button" title="导出 CSV" @click="exportCSV"><Download :size="16" /><span>导出</span></button>
         </div>
         <div class="list-meta">
@@ -357,9 +408,27 @@ onBeforeUnmount(() => {
         <label class="field"><span>有效期</span><select v-model="shareExpiry"><option :value="3600">1 小时</option><option :value="86400">1 天</option><option :value="604800">7 天</option><option :value="2592000">30 天</option><option :value="null">永久</option></select></label>
         <p v-if="shareError" class="message error">{{ shareError }}</p>
         <p v-if="shareNotice" class="message success">{{ shareNotice }}</p>
-        <div class="share-list"><div v-for="link in shareLinks" :key="link.id" class="share-item"><span>{{ link.active ? '有效' : '已撤销' }} · {{ link.expiresAt ? formatDate(link.expiresAt) : '永久' }}</span><button v-if="link.active" class="button ghost" @click="revokeShare(link)">撤销</button></div><p v-if="!shareLoading && shareLinks.length === 0" class="muted">暂无分享链接</p></div>
+        <div v-if="shareCreatedURL" class="share-created"><div><span class="muted">新取件地址</span><code>{{ shareCreatedURL }}</code></div><button class="icon-button" title="复制取件地址" aria-label="复制取件地址" @click="copyShareURL(shareCreatedURL, 'single')"><Copy :size="16" /></button></div>
+        <div class="share-list"><div v-for="link in shareLinks" :key="link.id" class="share-item"><div><span>{{ link.active ? '有效' : '已撤销' }} · {{ link.expiresAt ? formatDate(link.expiresAt) : '永久' }}</span><code v-if="link.shareUrl">{{ fullShareURL(link.shareUrl) }}</code></div><div class="share-item-actions"><button v-if="link.shareUrl" class="icon-button" title="复制取件地址" aria-label="复制取件地址" @click="copyShareURL(fullShareURL(link.shareUrl), link.id)"><Copy :size="15" /></button><button v-if="link.active" class="button ghost" @click="revokeShare(link)">撤销</button></div></div><p v-if="!shareLoading && shareLinks.length === 0" class="muted">暂无分享链接</p></div>
       </div>
       <template #actions><button type="button" class="button ghost" :disabled="shareLoading" @click="shareOpen = false">关闭</button><button class="button primary" :disabled="shareLoading" @click="createShare"><LoaderCircle v-if="shareLoading" :size="16" class="spin" />生成分享链接</button></template>
+  </AppDialog>
+
+  <AppDialog id="batch-share" :open="batchShareOpen" title="批量取件" subtitle="按邮箱创建时间从早到晚生成取件地址" width="wide" :busy="batchShareLoading" @close="closeBatchShare">
+    <div class="batch-share-dialog">
+      <div class="batch-share-form">
+        <label class="field"><span>邮箱数量 <small>1 - 750 个</small></span><input v-model.number="batchShareCount" type="number" min="1" max="750" /></label>
+        <label class="field"><span>链接有效期</span><select v-model="batchShareExpiryPreset"><option value="3600">1 小时</option><option value="86400">1 天</option><option value="604800">7 天</option><option value="2592000">30 天</option><option value="custom">自定义时间</option><option value="never">永久</option></select></label>
+        <label v-if="batchShareExpiryPreset === 'custom'" class="field"><span>失效时间</span><input v-model="batchShareExpiryAt" type="datetime-local" /></label>
+      </div>
+      <p class="muted batch-share-hint">只选择启用中的邮箱；创建时间缺失的邮箱会排在最后。数量不足时不会生成部分链接。</p>
+      <p v-if="batchShareError" class="message error">{{ batchShareError }}</p>
+      <div v-if="batchShareResults.length" class="batch-share-results">
+        <div class="batch-share-result-heading"><strong>已生成 {{ batchShareResults.length }} 个取件地址</strong><button class="button ghost" @click="downloadBatchShareTXT"><Download :size="15" />下载 TXT</button></div>
+        <div v-for="item in batchShareResults" :key="item.id" class="batch-share-item"><div><strong>{{ item.alias }}</strong><code>{{ fullShareURL(item.shareUrl) }}</code></div><button class="icon-button" title="复制取件地址" :aria-label="`复制 ${item.alias} 的取件地址`" @click="copyShareURL(fullShareURL(item.shareUrl), item.id)"><Copy :size="16" /></button></div>
+      </div>
+    </div>
+    <template #actions><button type="button" class="button ghost" :disabled="batchShareLoading" @click="closeBatchShare">关闭</button><button v-if="batchShareResults.length" type="button" class="button secondary" :disabled="batchShareLoading" @click="downloadBatchShareTXT"><Download :size="15" />下载 TXT</button><button type="button" class="button primary" :disabled="batchShareLoading" @click="createBatchShare"><LoaderCircle v-if="batchShareLoading" :size="16" class="spin" /><MailPlus v-else :size="16" />生成取件地址</button></template>
   </AppDialog>
 
   <AppDialog id="delete-alias" :open="Boolean(deleteTarget)" title="删除隐藏邮箱" subtitle="此操作不可恢复" role="alertdialog" :busy="Boolean(pendingID)" @close="deleteTarget = null">
@@ -418,6 +487,16 @@ onBeforeUnmount(() => {
 .share-tools { display: flex; justify-content: flex-end; margin-bottom: 12px; }
 .share-list { display: grid; gap: 8px; margin-top: 16px; max-height: 220px; overflow: auto; }
 .share-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px; background: var(--surface-subtle); border: 1px solid var(--border-soft); border-radius: 6px; font-size: 12px; }
+.share-item > div:first-child, .share-created > div, .batch-share-item > div { display: grid; min-width: 0; gap: 5px; }
+.share-item code, .share-created code, .batch-share-item code { display: block; max-width: 100%; overflow: hidden; color: var(--muted); font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; text-overflow: ellipsis; white-space: nowrap; }
+.share-item-actions { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+.share-created { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; padding: 10px; background: var(--primary-soft); border: 1px solid color-mix(in srgb, var(--primary) 25%, transparent); border-radius: 6px; }
+.batch-share-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.batch-share-form .field:last-child { grid-column: 1 / -1; }
+.batch-share-hint { margin: 14px 0 0; }
+.batch-share-results { display: grid; gap: 8px; margin-top: 18px; }
+.batch-share-result-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--text); font-size: 12px; }
+.batch-share-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px; background: var(--surface-subtle); border: 1px solid var(--border-soft); border-radius: 6px; }
 .muted { color: var(--muted); }
 .danger-confirm { color: #fff; background: var(--danger); border-color: var(--danger); }
 .schedule-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
@@ -452,6 +531,9 @@ onBeforeUnmount(() => {
   .pagination-bar { align-items: flex-start; flex-direction: column; padding: 11px 12px; }
   .pagination-bar > div { width: 100%; justify-content: space-between; }
   .task-pane { min-height: 0; padding: 16px; }
+  .batch-share-form { grid-template-columns: minmax(0, 1fr); }
+  .batch-share-form .field:last-child { grid-column: auto; }
+  .batch-share-result-heading { align-items: stretch; flex-direction: column; }
   .task-header { align-items: flex-start; flex-direction: column; }
   .schedule-actions { justify-content: flex-start; width: 100%; }
   .schedule-form { grid-template-columns: minmax(0, 1fr); }

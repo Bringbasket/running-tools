@@ -352,6 +352,16 @@ func (s *MailboxService) Status() MailboxStatus {
 	return cache.Status
 }
 func (s *MailboxService) Messages(alias string, limit int) map[string]any {
+	return s.messages(alias, limit, false)
+}
+
+// MessagesDetailed is used by read-only share pages that render the message
+// body inline. The normal mailbox list keeps the existing compact preview.
+func (s *MailboxService) MessagesDetailed(alias string, limit int) map[string]any {
+	return s.messages(alias, limit, true)
+}
+
+func (s *MailboxService) messages(alias string, limit int, detailed bool) map[string]any {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	cache := s.loadLocked()
@@ -372,7 +382,10 @@ func (s *MailboxService) Messages(alias string, limit int) map[string]any {
 		}
 		for _, address := range m.Aliases {
 			if address == alias {
-				matches = append(matches, summarizeMailMessage(m))
+				if !detailed {
+					m = summarizeMailMessage(m)
+				}
+				matches = append(matches, m)
 				break
 			}
 		}

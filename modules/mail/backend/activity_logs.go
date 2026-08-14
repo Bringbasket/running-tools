@@ -29,6 +29,7 @@ var mailLogEvents = map[string]mailLogEvent{
 	"POST /aliases/{id}/delete":        {"alias", "alias.delete", "删除隐藏邮箱"},
 	"POST /aliases/{id}/update":        {"alias", "alias.update", "更新邮箱信息"},
 	"POST /aliases/{id}/share-links":   {"alias", "alias.share.create", "生成收件分享链接"},
+	"POST /aliases/batch-share-links":  {"alias", "alias.share.batch", "批量生成取件链接"},
 	"POST /share-links/{id}/revoke":    {"alias", "alias.share.revoke", "撤销收件分享链接"},
 	"POST /share-links/clear-inactive": {"alias", "alias.share.clear", "清理失效分享记录"},
 	"POST /alias-queue":                {"automation", "alias.queue.create", "提交批量创建队列"},

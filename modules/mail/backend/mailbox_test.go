@@ -57,6 +57,10 @@ func TestMailMessageListDoesNotExposeSafeHTML(t *testing.T) {
 	if !ok || detail.SafeHTML == "" {
 		t.Fatal("detail did not preserve safe HTML")
 	}
+	detailed := service.MessagesDetailed("one@icloud.com", 20)["messages"].([]MailMessage)
+	if len(detailed) != 1 || detailed[0].Text != "preview" || detailed[0].SafeHTML == "" {
+		t.Fatalf("detailed list did not preserve message body: %#v", detailed)
+	}
 }
 
 func TestMergeMailMessagesIsIncrementalAndPrunesDisabledAliases(t *testing.T) {

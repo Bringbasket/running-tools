@@ -1,5 +1,5 @@
 import { apiRequest } from '../../../frontend/src/api'
-import type { ActivityLogPage, AppleLoginResult, AutoRefreshStatus, CreateScheduleStatus, MailAlias, MailboxSettings, MailboxSettingsInput, MailboxStatus, MailMessage, SessionStatus, ShareLink } from './types'
+import type { ActivityLogPage, AppleLoginResult, AutoRefreshStatus, BatchShareLinkItem, CreateScheduleStatus, MailAlias, MailboxSettings, MailboxSettingsInput, MailboxStatus, MailMessage, SessionStatus, ShareLink } from './types'
 
 const base = '/api/mail/v1'
 
@@ -9,6 +9,7 @@ export const mailAPI = {
   updateAlias: (id: string, label: string, note: string) => apiRequest<MailAlias>(`${base}/aliases/${encodeURIComponent(id)}/update`, { method: 'POST', body: JSON.stringify({ label, note }) }),
   shareLinks: (id: string) => apiRequest<{ alias: string; links: ShareLink[] }>(`${base}/aliases/${encodeURIComponent(id)}/share-links`),
   createShareLink: (id: string, expiresInSeconds: number | null) => apiRequest<ShareLink>(`${base}/aliases/${encodeURIComponent(id)}/share-links`, { method: 'POST', body: JSON.stringify({ expiresInSeconds }) }),
+  createBatchShareLinks: (count: number, expiresInSeconds: number | null) => apiRequest<{ items: BatchShareLinkItem[]; count: number }>(`${base}/aliases/batch-share-links`, { method: 'POST', body: JSON.stringify({ count, expiresInSeconds }) }),
   revokeShareLink: (id: string) => apiRequest(`${base}/share-links/${encodeURIComponent(id)}/revoke`, { method: 'POST', body: '{}' }),
   clearInactiveShareLinks: () => apiRequest<{ cleared: boolean; deleted: number }>(`${base}/share-links/clear-inactive`, { method: 'POST', body: '{}' }),
   mailboxStatus: () => apiRequest<MailboxStatus>(`${base}/mail/sync/status`),

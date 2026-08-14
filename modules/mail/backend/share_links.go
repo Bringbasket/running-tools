@@ -46,6 +46,11 @@ type ShareLinkStore struct {
 	accountID string
 }
 
+type shareLinkCreateInput struct {
+	Alias          string
+	AliasCreatedAt float64
+}
+
 func NewShareLinkStore(stateDir string) *ShareLinkStore {
 	return &ShareLinkStore{path: filepath.Join(stateDir, "share-links.json"), accountID: defaultMailAccountID}
 }
@@ -150,38 +155,76 @@ func (s *ShareLinkStore) importLegacy() error {
 func shareAlias(value string) string { return strings.ToLower(strings.TrimSpace(value)) }
 
 func (s *ShareLinkStore) Create(alias string, expiresIn *int) (map[string]any, error) {
-	alias = shareAlias(alias)
-	if alias == "" {
-		return nil, fmt.Errorf("alias is required")
-	}
-	token, err := newShareToken()
+	items, err := s.CreateBatch([]shareLinkCreateInput{{Alias: alias}}, expiresIn)
 	if err != nil {
 		return nil, err
 	}
-	now := unixNow()
-	var expires *float64
-	if expiresIn != nil {
-		if *expiresIn < 5*60 || *expiresIn > 365*24*3600 {
-			return nil, fmt.Errorf("expiresInSeconds must be between 300 and 31536000")
-		}
-		value := now + float64(*expiresIn)
-		expires = &value
+	return items[0], nil
+}
+
+// CreateBatch creates all links under one lock and one database transaction.
+// The raw token is returned only in the response maps; persistent state stores
+// only its SHA-256 digest.
+func (s *ShareLinkStore) CreateBatch(inputs []shareLinkCreateInput, expiresIn *int) ([]map[string]any, error) {
+	if len(inputs) == 0 {
+		return nil, fmt.Errorf("at least one alias is required")
 	}
-	link := ShareLink{ID: newID(), Alias: alias, TokenHash: hashShareToken(token), CreatedAt: now, ExpiresAt: expires}
+	if expiresIn != nil && (*expiresIn < 5*60 || *expiresIn > 365*24*3600) {
+		return nil, fmt.Errorf("expiresInSeconds must be between 300 and 31536000")
+	}
+	now := unixNow()
+	links := make([]ShareLink, 0, len(inputs))
+	tokens := make([]string, 0, len(inputs))
+	for _, input := range inputs {
+		alias := shareAlias(input.Alias)
+		if alias == "" {
+			return nil, fmt.Errorf("alias is required")
+		}
+		token, err := newShareToken()
+		if err != nil {
+			return nil, err
+		}
+		var expires *float64
+		if expiresIn != nil {
+			value := now + float64(*expiresIn)
+			expires = &value
+		}
+		links = append(links, ShareLink{ID: newID(), Alias: alias, TokenHash: hashShareToken(token), CreatedAt: now, ExpiresAt: expires})
+		tokens = append(tokens, token)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.db != nil {
-		_, err = s.db.Exec(`INSERT INTO mail_share_links (id, account_id, alias, token_hash, created_at, expires_at) VALUES ($1,$2,$3,$4,$5,$6)`,
-			link.ID, s.accountID, alias, link.TokenHash, timeFromUnix(now), nullableTime(expires))
+		tx, err := s.db.Begin()
+		if err != nil {
+			return nil, err
+		}
+		for _, link := range links {
+			if _, err := tx.Exec(`INSERT INTO mail_share_links (id, account_id, alias, token_hash, created_at, expires_at) VALUES ($1,$2,$3,$4,$5,$6)`,
+				link.ID, s.accountID, link.Alias, link.TokenHash, timeFromUnix(link.CreatedAt), nullableTime(link.ExpiresAt)); err != nil {
+				_ = tx.Rollback()
+				return nil, err
+			}
+		}
+		if err := tx.Commit(); err != nil {
+			return nil, err
+		}
 	} else {
 		state := s.loadLocked()
-		state.Links = append(state.Links, link)
-		err = s.saveLocked(state)
+		state.Links = append(state.Links, links...)
+		if err := s.saveLocked(state); err != nil {
+			return nil, err
+		}
 	}
-	if err != nil {
-		return nil, err
+	out := make([]map[string]any, 0, len(links))
+	for index, link := range links {
+		item := map[string]any{"id": link.ID, "alias": link.Alias, "createdAt": link.CreatedAt, "expiresAt": link.ExpiresAt, "shareUrl": "/share/#" + tokens[index]}
+		if inputs[index].AliasCreatedAt > 0 {
+			item["aliasCreatedAt"] = inputs[index].AliasCreatedAt
+		}
+		out = append(out, item)
 	}
-	return map[string]any{"id": link.ID, "alias": alias, "createdAt": now, "expiresAt": expires, "shareUrl": "/share/#" + token}, nil
+	return out, nil
 }
 
 func (s *ShareLinkStore) List(alias string) []map[string]any {

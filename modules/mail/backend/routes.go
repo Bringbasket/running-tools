@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -65,6 +66,7 @@ func (api *routeAPI) register(mux *http.ServeMux, auth httpx.Middleware, base st
 	protect(http.MethodPost, "/aliases/{id}/update", api.updateAlias)
 	protect(http.MethodGet, "/aliases/{id}/share-links", api.shareLinks)
 	protect(http.MethodPost, "/aliases/{id}/share-links", api.createShareLink)
+	protect(http.MethodPost, "/aliases/batch-share-links", api.createBatchShareLinks)
 	protect(http.MethodPost, "/share-links/{id}/revoke", api.revokeShareLink)
 	protect(http.MethodPost, "/share-links/clear-inactive", api.clearInactiveShareLinks)
 	protect(http.MethodGet, "/mail/sync/status", api.mailboxStatus)
@@ -290,29 +292,28 @@ func shareJSON(w http.ResponseWriter, status int, payload any) {
 func (api *routeAPI) sharePage(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
-	_, _ = io.WriteString(w, `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>隐藏邮箱分享</title><link rel="stylesheet" href="/share/share.css"><script src="/share/share.js" defer></script></head><body><main><header><div><h1>共享收件箱</h1><p id="alias" class="muted"></p></div><span>只读</span></header><p id="status" class="muted">正在验证分享链接...</p><section id="content" hidden><div id="messages"></div></section><dialog id="detail"><button id="close" aria-label="关闭">×</button><small id="detail-meta" class="muted"></small><h2 id="detail-title"></h2><div id="detail-codes"></div><pre id="detail-text"></pre></dialog></main></body></html>`)
+	_, _ = io.WriteString(w, `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>隐藏邮箱分享</title><link rel="stylesheet" href="/share/share.css"><script src="/share/share.js" defer></script></head><body><main><header><div><h1>共享收件箱</h1><p id="alias" class="muted"></p></div><span>只读</span></header><p id="status" class="muted">正在验证分享链接...</p><section id="content" hidden><div id="messages"></div></section></main></body></html>`)
 }
 
 func (api *routeAPI) shareCSS(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/css; charset=utf-8")
-	_, _ = io.WriteString(w, `*{box-sizing:border-box}body{font-family:Inter,system-ui,"PingFang SC",sans-serif;max-width:820px;margin:36px auto;padding:0 16px;color:#172033;background:#f6f8fb}main{overflow:hidden;background:#fff;border:1px solid #dfe5ec;border-radius:8px}header{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;padding:22px;border-bottom:1px solid #e8edf2}h1{margin:0;font-size:20px}header p{margin:5px 0 0}header>span{padding:4px 8px;color:#047857;background:#ecfdf5;border-radius:5px;font-size:11px;font-weight:700}.muted{color:#687386;font-size:12px}#status{padding:18px 22px}.mail{display:block;width:100%;padding:16px 22px;color:inherit;background:#fff;border:0;border-top:1px solid #e8edf2;text-align:left}.mail:hover{background:#f8fafc}.mail h3{margin:5px 0;font-size:14px}.mail p{margin:0;overflow:hidden;color:#687386;font-size:12px;text-overflow:ellipsis;white-space:nowrap}.code{display:inline-flex;margin:3px 5px 3px 0;padding:4px 8px;color:#0f766e;background:#f0fdfa;border:0;border-radius:5px;font-weight:700}dialog{position:relative;width:min(680px,calc(100% - 28px));max-height:80vh;padding:24px;border:1px solid #dfe5ec;border-radius:8px;box-shadow:0 24px 70px #0f172a33}dialog::backdrop{background:#0f172a88}dialog h2{margin:7px 34px 14px 0;font-size:18px}dialog pre{max-height:52vh;margin:16px 0 0;padding-top:16px;overflow:auto;border-top:1px solid #e8edf2;font:13px/1.65 inherit;white-space:pre-wrap;overflow-wrap:anywhere}#close{position:absolute;top:14px;right:14px;width:34px;height:34px;color:#64748b;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;font-size:22px}@media(max-width:600px){body{margin:12px auto;padding:0 10px}header,.mail{padding:15px}dialog{padding:18px}}`)
+	_, _ = io.WriteString(w, `*{box-sizing:border-box}body{font-family:Inter,system-ui,"PingFang SC",sans-serif;max-width:820px;margin:36px auto;padding:0 16px;color:#172033;background:#f6f8fb}main{overflow:hidden;background:#fff;border:1px solid #dfe5ec;border-radius:8px}header{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;padding:22px;border-bottom:1px solid #e8edf2}h1{margin:0;font-size:20px}header p{margin:5px 0 0}header>span{padding:4px 8px;color:#047857;background:#ecfdf5;border-radius:5px;font-size:11px;font-weight:700}.muted{color:#687386;font-size:12px}#status{padding:18px 22px}.mail{display:block;width:100%;padding:18px 22px;color:inherit;background:#fff;border-top:1px solid #e8edf2}.mail h3{margin:5px 0 10px;font-size:14px}.mail-meta{display:block}.mail-body{margin:14px 0 0;padding:14px 0 0;overflow:auto;border-top:1px solid #e8edf2;font:13px/1.65 inherit;white-space:pre-wrap;overflow-wrap:anywhere}.code{display:inline-flex;margin:3px 5px 3px 0;padding:4px 8px;color:#0f766e;background:#f0fdfa;border:0;border-radius:5px;font-weight:700;cursor:pointer}@media(max-width:600px){body{margin:12px auto;padding:0 10px}header,.mail{padding:15px}}`)
 }
 
 func (api *routeAPI) shareJS(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 	_, _ = io.WriteString(w, `(async()=>{
-const status=document.getElementById('status'),content=document.getElementById('content'),alias=document.getElementById('alias'),messages=document.getElementById('messages'),dialog=document.getElementById('detail');let revision=0,stopped=false;
+const status=document.getElementById('status'),content=document.getElementById('content'),alias=document.getElementById('alias'),messages=document.getElementById('messages');let revision=0,stopped=false;
 const request=async url=>{const response=await fetch(url,{cache:'no-store'}),payload=await response.json();if(!response.ok)throw new Error(payload.data&&payload.data.error||'请求失败');return payload.data};
-const codeButton=value=>{const code=document.createElement('button');code.className='code';code.textContent=value;code.title='复制';code.onclick=event=>{event.stopPropagation();navigator.clipboard.writeText(value)};return code};
-const showMessage=async item=>{try{const detail=await request('/share/v1/messages/'+encodeURIComponent(item.uid));document.getElementById('detail-meta').textContent=new Date(detail.date*1000).toLocaleString('zh-CN')+' · '+(detail.from||'');document.getElementById('detail-title').textContent=detail.subject||'无主题';const codes=document.getElementById('detail-codes');codes.replaceChildren();for(const value of [...(detail.partnerCodes||[]),...(detail.codes||[])])codes.append(codeButton(value));document.getElementById('detail-text').textContent=detail.text||'';dialog.showModal()}catch(error){status.textContent=error instanceof Error?error.message:'邮件读取失败'}};
-const loadMessages=async()=>{const payload=await request('/share/v1/messages?limit=50'),items=payload.messages||[];revision=payload.sync&&payload.sync.revision||revision;messages.replaceChildren();if(!items.length){const empty=document.createElement('p');empty.id='status';empty.className='muted';empty.textContent='暂无可显示的邮件';messages.append(empty);return}for(const item of items){const article=document.createElement('button');article.className='mail';article.onclick=()=>showMessage(item);const meta=document.createElement('small');meta.className='muted';meta.textContent=new Date(item.date*1000).toLocaleString('zh-CN')+' · '+(item.from||'');article.append(meta);const title=document.createElement('h3');title.textContent=item.subject||'无主题';article.append(title);const preview=document.createElement('p');preview.textContent=(item.text||'').slice(0,160);article.append(preview);messages.append(article)}};
+const codeButton=value=>{const code=document.createElement('button');code.className='code';code.textContent=value;code.title='复制验证码';code.onclick=()=>navigator.clipboard?.writeText(value);return code};
+const loadMessages=async()=>{const payload=await request('/share/v1/messages?limit=50&full=1'),items=payload.messages||[];revision=payload.sync&&payload.sync.revision||revision;messages.replaceChildren();if(!items.length){const empty=document.createElement('p');empty.className='muted';empty.textContent='暂无可显示的邮件';messages.append(empty);return}for(const item of items){const article=document.createElement('article');article.className='mail';const meta=document.createElement('small');meta.className='muted mail-meta';meta.textContent=new Date(item.date*1000).toLocaleString('zh-CN')+' · '+(item.from||'');article.append(meta);const title=document.createElement('h3');title.textContent=item.subject||'无主题';article.append(title);const codes=document.createElement('div');for(const value of [...(item.partnerCodes||[]),...(item.codes||[])])codes.append(codeButton(value));article.append(codes);const body=document.createElement('pre');body.className='mail-body';body.textContent=item.text||'（邮件正文为空）';article.append(body);messages.append(article)}};
 const watch=async()=>{while(!stopped){try{const next=await request('/share/v1/sync/wait?revision='+revision+'&timeout=25');if(next.revision!==revision){revision=next.revision;await loadMessages()}}catch(error){if(!stopped)await new Promise(resolve=>setTimeout(resolve,3000))}}};
 try{
   const token=location.hash.slice(1);
   if(token){const response=await fetch('/share/v1/session',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token})});if(!response.ok)throw new Error('链接已过期或撤销');history.replaceState(null,'',location.pathname)}
   const info=await request('/share/v1/info');alias.textContent=info.alias;revision=info.sync&&info.sync.revision||0;status.textContent='';content.hidden=false;await loadMessages();watch();
 }catch(error){status.textContent=error instanceof Error?error.message:'分享链接无效'}
-document.getElementById('close').onclick=()=>dialog.close();window.addEventListener('beforeunload',()=>{stopped=true});
+window.addEventListener('beforeunload',()=>{stopped=true});
 })()`)
 }
 
@@ -407,6 +408,10 @@ func (api *routeAPI) shareMessages(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		limit = parsed
+	}
+	if raw := strings.TrimSpace(r.URL.Query().Get("full")); raw == "1" || strings.EqualFold(raw, "true") {
+		shareJSON(w, http.StatusOK, runtime.mailbox.MessagesDetailed(shareAlias(link.Alias), limit))
+		return
 	}
 	shareJSON(w, http.StatusOK, runtime.mailbox.Messages(shareAlias(link.Alias), limit))
 }
@@ -506,6 +511,78 @@ func (api *routeAPI) createShareLink(w http.ResponseWriter, r *http.Request) {
 	}
 	httpx.WriteData(w, r, http.StatusOK, result)
 }
+
+func (api *routeAPI) createBatchShareLinks(w http.ResponseWriter, r *http.Request) {
+	payload := struct {
+		Count            int  `json:"count"`
+		ExpiresInSeconds *int `json:"expiresInSeconds"`
+	}{Count: 1, ExpiresInSeconds: func() *int { value := 7 * 24 * 60 * 60; return &value }()}
+	if r.ContentLength != 0 {
+		if err := httpx.DecodeJSON(w, r, &payload, 64<<10); err != nil {
+			httpx.WriteError(w, r, http.StatusBadRequest, "BAD_REQUEST", err.Error())
+			return
+		}
+	}
+	if payload.Count < 1 || payload.Count > 750 {
+		httpx.WriteError(w, r, http.StatusBadRequest, "BAD_REQUEST", "count 必须是 1 到 750 之间的整数")
+		return
+	}
+	aliases, err := api.sessionFor(r).ListAliases(r.Context())
+	if err != nil {
+		api.writeMailError(w, r, err)
+		return
+	}
+	type candidate struct {
+		alias     string
+		createdAt float64
+		index     int
+	}
+	candidates := make([]candidate, 0, len(aliases))
+	seen := make(map[string]struct{}, len(aliases))
+	for index, raw := range aliases {
+		if active, ok := raw["isActive"].(bool); ok && !active {
+			continue
+		}
+		alias := shareAlias(fmt.Sprint(raw["hme"]))
+		if alias == "" {
+			continue
+		}
+		if _, ok := seen[alias]; ok {
+			continue
+		}
+		seen[alias] = struct{}{}
+		createdAt, _ := aliasTimestampFromMap(raw)
+		candidates = append(candidates, candidate{alias: alias, createdAt: createdAt, index: index})
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		left, right := candidates[i], candidates[j]
+		if left.createdAt == 0 {
+			return false
+		}
+		if right.createdAt == 0 {
+			return true
+		}
+		if left.createdAt == right.createdAt {
+			return left.index < right.index
+		}
+		return left.createdAt < right.createdAt
+	})
+	if payload.Count > len(candidates) {
+		httpx.WriteError(w, r, http.StatusConflict, "INSUFFICIENT_ALIASES", fmt.Sprintf("可用邮箱只有 %d 个，无法生成 %d 个取件链接", len(candidates), payload.Count))
+		return
+	}
+	inputs := make([]shareLinkCreateInput, 0, payload.Count)
+	for _, item := range candidates[:payload.Count] {
+		inputs = append(inputs, shareLinkCreateInput{Alias: item.alias, AliasCreatedAt: item.createdAt})
+	}
+	items, err := api.sharesFor(r).CreateBatch(inputs, payload.ExpiresInSeconds)
+	if err != nil {
+		httpx.WriteError(w, r, http.StatusBadRequest, "BAD_REQUEST", err.Error())
+		return
+	}
+	httpx.WriteData(w, r, http.StatusOK, map[string]any{"items": items, "count": len(items)})
+}
+
 func (api *routeAPI) revokeShareLink(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimSpace(r.PathValue("id"))
 	if !api.sharesFor(r).Revoke(id) {

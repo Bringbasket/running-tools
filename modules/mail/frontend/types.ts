@@ -81,6 +81,10 @@ export interface ShareLink {
   shareUrl?: string
 }
 
+export interface BatchShareLinkItem extends ShareLink {
+  aliasCreatedAt?: number
+}
+
 export interface MailboxStatus {
   configured: boolean
   enabled: boolean
