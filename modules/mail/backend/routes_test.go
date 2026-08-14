@@ -188,6 +188,19 @@ func TestShareSessionScopesMessageDetailsToLinkedAlias(t *testing.T) {
 	}
 }
 
+func TestSharePageRedirectsHashTokenToRawLatestJSON(t *testing.T) {
+	api := &routeAPI{}
+	mux := http.NewServeMux()
+	api.register(mux, httpx.APIKey("secret"), "/api/mail/v1", false)
+	request := httptest.NewRequest(http.MethodGet, "/share/share.js", nil)
+	response := httptest.NewRecorder()
+	mux.ServeHTTP(response, request)
+	script := response.Body.String()
+	if response.Code != http.StatusOK || !strings.Contains(script, "window.location.replace('/share/v1/latest?token='+encodeURIComponent(token))") || strings.Contains(script, "showJSON") {
+		t.Fatalf("share page did not redirect to raw JSON: %s", script)
+	}
+}
+
 func TestShareWaitRejectsInvalidRevisionBeforePolling(t *testing.T) {
 	root := t.TempDir()
 	shares := NewShareLinkStore(root)

@@ -105,9 +105,10 @@ X-Mail-Account-ID: default
 分享页面的 `/share/v1/messages?full=1` 会直接返回当前链接可见邮件正文，用于页面内展示；
 不带 `full=1` 时仍返回摘要，单封详情接口继续兼容。
 
-访问生成的 `/share/#TOKEN` 地址时，页面会调用 `/share/v1/latest?token=TOKEN` 并直接展示该接口
-的紧凑 JSON 响应，其中 `data.message` 只包含最新邮件的 `uid`、`from`、`subject`、`date`、压缩后的
-`text`、`codes` 和 `partnerCodes`，不会返回重复的 `aliases` 或 `safeHtml`。生成地址格式保持不变。
+访问生成的 `/share/#TOKEN` 地址时，页面会立即跳转到 `/share/v1/latest?token=TOKEN`，由浏览器
+直接显示该接口的紧凑 JSON 响应。其中 `data.message` 只包含最新邮件的 `uid`、`from`、`subject`、
+`date`、压缩后的 `text`、`codes` 和 `partnerCodes`，不会返回重复的 `aliases` 或 `safeHtml`。生成
+地址格式保持不变。
 
 删除母号会先停止该账号的 Session 自动刷新、自动创建、批量队列和 IMAP Worker，再永久清理
 PostgreSQL 中对应的 Session/任务状态、邮件缓存、分享链接和使用日志。默认账号 `default`
