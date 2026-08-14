@@ -196,7 +196,7 @@ func TestSharePageRedirectsHashTokenToRawLatestJSON(t *testing.T) {
 	response := httptest.NewRecorder()
 	mux.ServeHTTP(response, request)
 	script := response.Body.String()
-	if response.Code != http.StatusOK || !strings.Contains(script, "window.location.replace('/share/v1/latest?token='+encodeURIComponent(token))") || strings.Contains(script, "showJSON") {
+	if response.Code != http.StatusOK || response.Header().Get("Cache-Control") != "no-store" || !strings.Contains(script, "window.location.replace('/share/v1/latest?token='+encodeURIComponent(token))") || strings.Contains(script, "showJSON") {
 		t.Fatalf("share page did not redirect to raw JSON: %s", script)
 	}
 }

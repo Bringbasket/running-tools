@@ -303,6 +303,7 @@ func (api *routeAPI) shareCSS(w http.ResponseWriter, _ *http.Request) {
 
 func (api *routeAPI) shareJS(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
 	_, _ = io.WriteString(w, `(async()=>{
 const status=document.getElementById('status'),content=document.getElementById('content'),alias=document.getElementById('alias'),messages=document.getElementById('messages');let revision=0,stopped=false;
 const request=async url=>{const response=await fetch(url,{cache:'no-store'}),payload=await response.json();if(!response.ok)throw new Error(payload.data&&payload.data.error||'请求失败');return payload.data};
