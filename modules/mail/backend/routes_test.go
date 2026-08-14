@@ -134,7 +134,7 @@ func TestShareSessionScopesMessageDetailsToLinkedAlias(t *testing.T) {
 	cache := mailboxCache{
 		Status: MailboxStatus{Revision: 2, UIDValidity: 7, MailboxGeneration: "generation-1"},
 		Messages: []MailMessage{
-			{UID: 11, Aliases: []string{"demo@icloud.com"}, Subject: "demo"},
+			{UID: 11, Aliases: []string{"demo@icloud.com"}, Subject: "verification code", Text: "line one\r\n\r\ncode: 123456", SafeHTML: "<p>private</p>"},
 			{UID: 22, Aliases: []string{"private@icloud.com"}, Subject: "private"},
 		},
 	}
@@ -156,8 +156,12 @@ func TestShareSessionScopesMessageDetailsToLinkedAlias(t *testing.T) {
 	latestRequest := httptest.NewRequest(http.MethodGet, "/share/v1/latest?token="+url.QueryEscape(token), nil)
 	latestResponse := httptest.NewRecorder()
 	mux.ServeHTTP(latestResponse, latestRequest)
-	if latestResponse.Code != http.StatusOK || !strings.Contains(latestResponse.Body.String(), "demo") {
+	latestBody := latestResponse.Body.String()
+	if latestResponse.Code != http.StatusOK || !strings.Contains(latestBody, "demo") {
 		t.Fatalf("latest JSON endpoint failed: %d %s", latestResponse.Code, latestResponse.Body.String())
+	}
+	if strings.Contains(latestBody, "safeHtml") || strings.Contains(latestBody, `\r\n`) || !strings.Contains(latestBody, `"codes":["123456"]`) || !strings.Contains(latestBody, `"text":"line one code: 123456"`) {
+		t.Fatalf("latest JSON was not compacted: %s", latestBody)
 	}
 	sessionRequest := httptest.NewRequest(http.MethodPost, "/share/v1/session", bytes.NewReader(body))
 	sessionResponse := httptest.NewRecorder()

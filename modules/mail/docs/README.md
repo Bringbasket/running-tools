@@ -122,7 +122,8 @@ Session、任务状态、邮件缓存、分享链接和使用日志。默认账�
 格式的 TXT 文件。生成过程是一次事务，数量不足或有效期不合法时不会留下部分链接。
 
 生成地址仍为 `/share/#TOKEN`。访问该地址时会调用 `/share/v1/latest?token=TOKEN`，并直接展示
-最新一封邮件的 JSON 响应；旧分享 token 也继续兼容。
+最新一封邮件的紧凑 JSON 响应；正文会合并多余空白，不返回 `safeHtml` 和重复的 `aliases`，旧分享
+token 也继续兼容。
 
 带会话的旧版 `/share/v1/messages` 接口仍保留完整正文读取能力。
 

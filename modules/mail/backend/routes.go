@@ -307,7 +307,7 @@ func (api *routeAPI) shareJS(w http.ResponseWriter, _ *http.Request) {
 const status=document.getElementById('status'),content=document.getElementById('content'),alias=document.getElementById('alias'),messages=document.getElementById('messages');let revision=0,stopped=false;
 const request=async url=>{const response=await fetch(url,{cache:'no-store'}),payload=await response.json();if(!response.ok)throw new Error(payload.data&&payload.data.error||'请求失败');return payload.data};
 const codeButton=value=>{const code=document.createElement('button');code.className='code';code.textContent=value;code.title='复制验证码';code.onclick=()=>navigator.clipboard?.writeText(value);return code};
-const showJSON=payload=>{document.body.replaceChildren();const pre=document.createElement('pre');pre.style.cssText='box-sizing:border-box;max-width:820px;margin:36px auto;padding:22px;overflow:auto;color:#172033;background:#fff;border:1px solid #dfe5ec;border-radius:8px;font:13px/1.65 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;overflow-wrap:anywhere';pre.textContent=JSON.stringify(payload,null,2);document.body.style.cssText='margin:0;padding:0 16px;background:#f6f8fb';document.body.append(pre)};
+const showJSON=payload=>{document.body.replaceChildren();const pre=document.createElement('pre');pre.style.cssText='box-sizing:border-box;max-width:820px;margin:36px auto;padding:22px;overflow:auto;color:#172033;background:#fff;border:1px solid #dfe5ec;border-radius:8px;font:13px/1.65 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;overflow-wrap:anywhere';pre.textContent=JSON.stringify(payload);document.body.style.cssText='margin:0;padding:0 16px;background:#f6f8fb';document.body.append(pre)};
 const loadMessages=async()=>{const payload=await request('/share/v1/messages?limit=50&full=1'),items=payload.messages||[];revision=payload.sync&&payload.sync.revision||revision;messages.replaceChildren();if(!items.length){const empty=document.createElement('p');empty.className='muted';empty.textContent='暂无可显示的邮件';messages.append(empty);return}for(const item of items){const article=document.createElement('article');article.className='mail';const meta=document.createElement('small');meta.className='muted mail-meta';meta.textContent=new Date(item.date*1000).toLocaleString('zh-CN')+' · '+(item.from||'');article.append(meta);const title=document.createElement('h3');title.textContent=item.subject||'无主题';article.append(title);const codes=document.createElement('div');for(const value of [...(item.partnerCodes||[]),...(item.codes||[])])codes.append(codeButton(value));article.append(codes);const body=document.createElement('pre');body.className='mail-body';body.textContent=item.text||'（邮件正文为空）';article.append(body);messages.append(article)}};
 const watch=async()=>{while(!stopped){try{const next=await request('/share/v1/sync/wait?revision='+revision+'&timeout=25');if(next.revision!==revision){revision=next.revision;await loadMessages()}}catch(error){if(!stopped)await new Promise(resolve=>setTimeout(resolve,3000))}}};
 try{
@@ -419,6 +419,61 @@ func (api *routeAPI) shareTokenLink(r *http.Request, token string) (*accountRunt
 	return api.runtimeFor(r), link, true
 }
 
+type shareLatestMessage struct {
+	UID          uint32   `json:"uid"`
+	From         string   `json:"from,omitempty"`
+	Subject      string   `json:"subject,omitempty"`
+	Date         float64  `json:"date"`
+	Text         string   `json:"text,omitempty"`
+	Codes        []string `json:"codes,omitempty"`
+	PartnerCodes []string `json:"partnerCodes,omitempty"`
+}
+
+func compactShareText(value string) string {
+	return strings.Join(strings.Fields(value), " ")
+}
+
+func compactShareCodes(values []string) []string {
+	seen := make(map[string]bool, len(values))
+	out := make([]string, 0, len(values))
+	for _, raw := range values {
+		code := strings.ToUpper(strings.TrimSpace(raw))
+		if len(code) < 4 || len(code) > 10 || seen[code] {
+			continue
+		}
+		hasDigit := false
+		for _, char := range code {
+			if char >= '0' && char <= '9' {
+				hasDigit = true
+				break
+			}
+		}
+		if !hasDigit {
+			continue
+		}
+		seen[code] = true
+		out = append(out, code)
+	}
+	return out
+}
+
+func compactShareMessage(message MailMessage) shareLatestMessage {
+	// Re-extract codes for older cached messages created by the previous loose parser.
+	codes := compactShareCodes(extractCodes(message.Subject + "\n" + message.Text))
+	if len(codes) == 0 {
+		codes = compactShareCodes(message.Codes)
+	}
+	return shareLatestMessage{
+		UID:          message.UID,
+		From:         message.From,
+		Subject:      message.Subject,
+		Date:         message.Date,
+		Text:         compactShareText(message.Text),
+		Codes:        codes,
+		PartnerCodes: message.PartnerCodes,
+	}
+}
+
 func (api *routeAPI) shareLatest(w http.ResponseWriter, r *http.Request) {
 	runtime, link, ok := api.shareTokenLink(r, r.URL.Query().Get("token"))
 	if !ok {
@@ -434,7 +489,7 @@ func (api *routeAPI) shareLatest(w http.ResponseWriter, r *http.Request) {
 	shareJSON(w, http.StatusOK, map[string]any{
 		"alias":     shareAlias(link.Alias),
 		"expiresAt": link.ExpiresAt,
-		"message":   items[0],
+		"message":   compactShareMessage(items[0]),
 	})
 }
 

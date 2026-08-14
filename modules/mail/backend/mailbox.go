@@ -968,7 +968,8 @@ func hiddenSet(values []string) map[string]bool {
 }
 
 var emailPattern = regexp.MustCompile(`(?i)[a-z0-9.!#$%&'*+/=?^_` + "`" + `{|}~-]+@[a-z0-9.-]+\.[a-z]{2,}`)
-var codePattern = regexp.MustCompile(`(?i)(?:验证码|verification code|security code|otp|code)\D{0,24}([A-Z0-9]{4,10})`)
+var numericCodePattern = regexp.MustCompile(`(?i)(?:验证码|verification\s+code|security\s+code|one[- ]time(?:\s+password)?|otp|passcode|code)[^0-9]{0,160}([0-9]{4,10})(?:\D|$)`)
+var alphaCodePattern = regexp.MustCompile(`(?i)(?:验证码|verification\s+code|security\s+code|one[- ]time(?:\s+password)?|otp|passcode|code)(?:\s+(?:is|:))?[^A-Za-z0-9]{0,16}([A-Z0-9]{4,10})(?:\b|$)`)
 
 func parseMailMessage(uid uint32, raw []byte, allowed map[string]bool) (MailMessage, error) {
 	message, err := mail.ReadMessage(bytes.NewReader(raw))
@@ -1218,12 +1219,29 @@ func decodeHeader(value string) string {
 func extractCodes(value string) []string {
 	seen := map[string]bool{}
 	out := []string{}
-	for _, match := range codePattern.FindAllStringSubmatch(value, -1) {
-		code := strings.ToUpper(match[1])
-		if !seen[code] {
-			seen[code] = true
-			out = append(out, code)
+	add := func(raw string) {
+		code := strings.ToUpper(strings.TrimSpace(raw))
+		if len(code) < 4 || len(code) > 10 || seen[code] {
+			return
 		}
+		hasDigit := false
+		for _, char := range code {
+			if char >= '0' && char <= '9' {
+				hasDigit = true
+				break
+			}
+		}
+		if !hasDigit {
+			return
+		}
+		seen[code] = true
+		out = append(out, code)
+	}
+	for _, match := range numericCodePattern.FindAllStringSubmatch(value, -1) {
+		add(match[1])
+	}
+	for _, match := range alphaCodePattern.FindAllStringSubmatch(value, -1) {
+		add(match[1])
 	}
 	return out
 }

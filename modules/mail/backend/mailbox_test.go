@@ -25,6 +25,14 @@ func TestParseMailMessageMatchesAliasAndExtractsCode(t *testing.T) {
 	}
 }
 
+func TestExtractCodesIgnoresBodyWordsAndFindsNumericVerificationCode(t *testing.T) {
+	value := "Your temporary ChatGPT verification code\r\n\r\nEnter this temporary verification code to continue:\r\n\r\n945985\r\nPlease ignore this email if this wasn't you trying to create a ChatGPT account."
+	got := extractCodes(value)
+	if len(got) != 1 || got[0] != "945985" {
+		t.Fatalf("unexpected verification codes: %#v", got)
+	}
+}
+
 func TestSanitizeEmailHTMLKeepsLayoutAndDropsActiveContent(t *testing.T) {
 	raw := `<div style="background:url(https://tracker.example/pixel)"><script>alert(1)</script><img src="https://tracker.example/open"><a href="javascript:alert(2)" onclick="alert(3)">危险</a><a href="https://example.com/login?token=1" style="color:red">登录</a><form><input value="secret">表单</form><strong>验证码 123456</strong></div>`
 	safe := sanitizeEmailHTML(raw)
