@@ -55,6 +55,7 @@ const paged = computed(() => filtered.value.slice((page.value - 1) * pageSize.va
 const rangeStart = computed(() => filtered.value.length ? (page.value - 1) * pageSize.value + 1 : 0)
 const rangeEnd = computed(() => Math.min(page.value * pageSize.value, filtered.value.length))
 const keyOf = (message: MailMessage, address = message.aliases[0] || '') => `${address}:${message.uid}`
+const codesOf = (message: MailMessage | null | undefined) => [...(message?.partnerCodes || []), ...(message?.codes || [])]
 const syncMode = computed(() => ({ idle: '实时监听', sync: '正在同步', poll: '定时轮询', disabled: '未启用', stopped: '已停止' }[status.value?.syncMode || ''] || '等待启动'))
 
 watch([alias, pageSize], () => { page.value = 1 })
@@ -276,7 +277,7 @@ onBeforeUnmount(() => { stopped = true; window.removeEventListener('mail-account
               <td><input type="checkbox" :checked="selected.has(keyOf(message))" aria-label="选择邮件" @change="toggle(message)" /></td>
               <td class="message-summary" @click="openMessage(message)"><strong>{{ message.subject || '无主题' }}</strong><small>{{ message.from }}</small><span>{{ message.text }}</span></td>
               <td class="alias-cell">{{ message.aliases.join('、') }}</td>
-              <td class="code-cell"><button v-for="code in [...message.partnerCodes, ...message.codes]" :key="code" class="code-chip" title="复制验证码" @click="copyCode(code)">{{ code }}</button><span v-if="!message.codes.length && !message.partnerCodes.length" class="muted">—</span></td>
+              <td class="code-cell"><button v-for="code in codesOf(message)" :key="code" class="code-chip" title="复制验证码" @click="copyCode(code)">{{ code }}</button><span v-if="!codesOf(message).length" class="muted">—</span></td>
               <td class="time-cell">{{ new Date(message.date * 1000).toLocaleString('zh-CN') }}</td>
               <td><button class="icon-button" title="从本地列表隐藏" @click="hideOne(message)"><Trash2 :size="16" /></button></td>
             </tr>
@@ -320,7 +321,7 @@ onBeforeUnmount(() => { stopped = true; window.removeEventListener('mail-account
   <AppDialog id="mail-detail" :open="Boolean(detail)" :title="detail?.subject || '无主题'" :subtitle="detail ? `${detail.from} · ${new Date(detail.date * 1000).toLocaleString('zh-CN')}` : ''" width="wide" @close="detail = null">
       <article v-if="detail" class="mail-detail">
         <div class="detail-toolbar">
-          <div class="detail-codes"><button v-for="code in [...detail.partnerCodes, ...detail.codes]" :key="code" class="code-chip" title="复制验证码" @click="copyCode(code)">{{ code }}</button></div>
+          <div class="detail-codes"><button v-for="code in codesOf(detail)" :key="code" class="code-chip" title="复制验证码" @click="copyCode(code)">{{ code }}</button></div>
           <div v-if="detail.safeHtml" class="mode-switch"><button :class="{ active: detailMode === 'text' }" @click="detailMode = 'text'">纯文本</button><button :class="{ active: detailMode === 'html' }" @click="detailMode = 'html'">原邮件</button></div>
         </div>
         <pre v-if="detailMode === 'text'">{{ detail.text }}</pre>

@@ -385,6 +385,7 @@ func (s *MailboxService) messages(alias string, limit int, detailed bool) map[st
 				if !detailed {
 					m = summarizeMailMessage(m)
 				}
+				normalizeMailMessageLists(&m)
 				matches = append(matches, m)
 				break
 			}
@@ -422,6 +423,7 @@ func (s *MailboxService) Recent(limit int) map[string]any {
 			}
 		}
 		if visible {
+			normalizeMailMessageLists(&message)
 			items = append(items, summarizeMailMessage(message))
 		}
 		if len(items) >= limit {
@@ -435,6 +437,21 @@ func summarizeMailMessage(message MailMessage) MailMessage {
 	message.Text = truncateText(message.Text, 160)
 	message.SafeHTML = ""
 	return message
+}
+
+func normalizeMailMessageLists(message *MailMessage) {
+	if message == nil {
+		return
+	}
+	if message.Aliases == nil {
+		message.Aliases = []string{}
+	}
+	if message.Codes == nil {
+		message.Codes = []string{}
+	}
+	if message.PartnerCodes == nil {
+		message.PartnerCodes = []string{}
+	}
 }
 
 func (s *MailboxService) Message(alias string, uid uint32) (MailMessage, bool) {
@@ -451,6 +468,7 @@ func (s *MailboxService) Message(alias string, uid uint32) (MailMessage, bool) {
 		}
 		for _, address := range message.Aliases {
 			if address == alias {
+				normalizeMailMessageLists(&message)
 				return message, true
 			}
 		}

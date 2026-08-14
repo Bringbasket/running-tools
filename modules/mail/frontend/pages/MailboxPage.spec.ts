@@ -41,7 +41,7 @@ function messages(count: number) {
 describe('收件箱页面', () => {
   afterEach(() => { vi.restoreAllMocks(); toastState.items = [] })
 
-  it('支持分页、筛选和按需加载安全 HTML 详情', async () => {
+	it('支持分页、筛选和按需加载安全 HTML 详情', async () => {
     mocks.mailboxRecent.mockResolvedValue({
       days: 3,
       messages: messages(45),
@@ -78,10 +78,26 @@ describe('收件箱页面', () => {
     await flushPromises()
     expect(document.body.querySelector('iframe.mail-html')?.getAttribute('sandbox')).toContain('allow-popups')
 
-    wrapper.unmount()
-  })
+		wrapper.unmount()
+	})
 
-  it('从邮箱列表进入时只读取指定隐藏邮箱的邮件', async () => {
+	it('兼容 IMAP 返回 null 验证码列表', async () => {
+		mocks.mailboxRecent.mockResolvedValue({
+			days: 3,
+			messages: [{ ...messages(1)[0], codes: null, partnerCodes: null }],
+			sync: { configured: true, enabled: true, workerRunning: true, syncMode: 'idle', revision: 1, lastSyncAt: 1786500000 },
+		})
+		mocks.mailboxWait.mockImplementation(() => new Promise(() => {}))
+
+		const wrapper = mount(MailboxPage)
+		await flushPromises()
+
+		expect(wrapper.text()).toContain('邮件 1')
+		expect(wrapper.text()).toContain('—')
+		wrapper.unmount()
+	})
+
+	it('从邮箱列表进入时只读取指定隐藏邮箱的邮件', async () => {
     vi.clearAllMocks()
     const previousURL = window.location.href
     window.history.pushState({}, '', '/mail/mailbox?alias=target%40icloud.com')
