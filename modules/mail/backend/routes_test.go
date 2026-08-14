@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -146,12 +147,18 @@ func TestShareSessionScopesMessageDetailsToLinkedAlias(t *testing.T) {
 		t.Fatal(err)
 	}
 	shareURL := created["shareUrl"].(string)
-	token := shareURL[strings.LastIndex(shareURL, "#")+1:]
+	token := shareTokenFromURL(shareURL)
 
 	api := &routeAPI{shares: shares, mailbox: mailbox}
 	mux := http.NewServeMux()
 	api.register(mux, httpx.APIKey("secret"), "/api/mail/v1", false)
 	body, _ := json.Marshal(map[string]string{"token": token})
+	latestRequest := httptest.NewRequest(http.MethodGet, "/share/v1/latest?token="+url.QueryEscape(token), nil)
+	latestResponse := httptest.NewRecorder()
+	mux.ServeHTTP(latestResponse, latestRequest)
+	if latestResponse.Code != http.StatusOK || !strings.Contains(latestResponse.Body.String(), "demo") {
+		t.Fatalf("latest JSON endpoint failed: %d %s", latestResponse.Code, latestResponse.Body.String())
+	}
 	sessionRequest := httptest.NewRequest(http.MethodPost, "/share/v1/session", bytes.NewReader(body))
 	sessionResponse := httptest.NewRecorder()
 	mux.ServeHTTP(sessionResponse, sessionRequest)
@@ -185,7 +192,7 @@ func TestShareWaitRejectsInvalidRevisionBeforePolling(t *testing.T) {
 		t.Fatal(err)
 	}
 	token := created["shareUrl"].(string)
-	token = token[strings.LastIndex(token, "#")+1:]
+	token = shareTokenFromURL(token)
 	sessionToken, _, ok := shares.CreateSession(token, 3600)
 	if !ok {
 		t.Fatal("share session not created")

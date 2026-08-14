@@ -109,6 +109,7 @@ func (api *routeAPI) register(mux *http.ServeMux, auth httpx.Middleware, base st
 		mux.HandleFunc("GET /share/share.js", api.shareJS)
 		mux.HandleFunc("POST /share/v1/session", api.shareSession)
 		mux.HandleFunc("GET /share/v1/info", api.shareInfo)
+		mux.HandleFunc("GET /share/v1/latest", api.shareLatest)
 		mux.HandleFunc("GET /share/v1/messages", api.shareMessages)
 		mux.HandleFunc("GET /share/v1/messages/{uid}", api.shareMessage)
 		mux.HandleFunc("GET /share/v1/sync/wait", api.shareWait)
@@ -306,11 +307,12 @@ func (api *routeAPI) shareJS(w http.ResponseWriter, _ *http.Request) {
 const status=document.getElementById('status'),content=document.getElementById('content'),alias=document.getElementById('alias'),messages=document.getElementById('messages');let revision=0,stopped=false;
 const request=async url=>{const response=await fetch(url,{cache:'no-store'}),payload=await response.json();if(!response.ok)throw new Error(payload.data&&payload.data.error||'请求失败');return payload.data};
 const codeButton=value=>{const code=document.createElement('button');code.className='code';code.textContent=value;code.title='复制验证码';code.onclick=()=>navigator.clipboard?.writeText(value);return code};
+const showJSON=payload=>{document.body.replaceChildren();const pre=document.createElement('pre');pre.style.cssText='box-sizing:border-box;max-width:820px;margin:36px auto;padding:22px;overflow:auto;color:#172033;background:#fff;border:1px solid #dfe5ec;border-radius:8px;font:13px/1.65 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;overflow-wrap:anywhere';pre.textContent=JSON.stringify(payload,null,2);document.body.style.cssText='margin:0;padding:0 16px;background:#f6f8fb';document.body.append(pre)};
 const loadMessages=async()=>{const payload=await request('/share/v1/messages?limit=50&full=1'),items=payload.messages||[];revision=payload.sync&&payload.sync.revision||revision;messages.replaceChildren();if(!items.length){const empty=document.createElement('p');empty.className='muted';empty.textContent='暂无可显示的邮件';messages.append(empty);return}for(const item of items){const article=document.createElement('article');article.className='mail';const meta=document.createElement('small');meta.className='muted mail-meta';meta.textContent=new Date(item.date*1000).toLocaleString('zh-CN')+' · '+(item.from||'');article.append(meta);const title=document.createElement('h3');title.textContent=item.subject||'无主题';article.append(title);const codes=document.createElement('div');for(const value of [...(item.partnerCodes||[]),...(item.codes||[])])codes.append(codeButton(value));article.append(codes);const body=document.createElement('pre');body.className='mail-body';body.textContent=item.text||'（邮件正文为空）';article.append(body);messages.append(article)}};
 const watch=async()=>{while(!stopped){try{const next=await request('/share/v1/sync/wait?revision='+revision+'&timeout=25');if(next.revision!==revision){revision=next.revision;await loadMessages()}}catch(error){if(!stopped)await new Promise(resolve=>setTimeout(resolve,3000))}}};
 try{
   const token=location.hash.slice(1);
-  if(token){const response=await fetch('/share/v1/session',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token})});if(!response.ok)throw new Error('链接已过期或撤销');history.replaceState(null,'',location.pathname)}
+  if(token){const response=await fetch('/share/v1/latest?token='+encodeURIComponent(token),{cache:'no-store'});const payload=await response.json();showJSON(payload);return}
   const info=await request('/share/v1/info');alias.textContent=info.alias;revision=info.sync&&info.sync.revision||0;status.textContent='';content.hidden=false;await loadMessages();watch();
 }catch(error){status.textContent=error instanceof Error?error.message:'分享链接无效'}
 window.addEventListener('beforeunload',()=>{stopped=true});
@@ -394,6 +396,48 @@ func (api *routeAPI) shareInfo(w http.ResponseWriter, r *http.Request) {
 	}
 	shareJSON(w, http.StatusOK, map[string]any{"alias": shareAlias(link.Alias), "createdAt": link.CreatedAt, "expiresAt": link.ExpiresAt, "sync": runtime.mailbox.Status()})
 }
+
+func (api *routeAPI) shareTokenLink(r *http.Request, token string) (*accountRuntime, ShareLink, bool) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return nil, ShareLink{}, false
+	}
+	if api.module != nil {
+		for _, account := range api.module.accountList() {
+			if runtime, exists := api.module.runtime(account.ID); exists {
+				if link, ok := runtime.shares.Resolve(token); ok {
+					return runtime, link, true
+				}
+			}
+		}
+		return nil, ShareLink{}, false
+	}
+	link, ok := api.shares.Resolve(token)
+	if !ok {
+		return nil, ShareLink{}, false
+	}
+	return api.runtimeFor(r), link, true
+}
+
+func (api *routeAPI) shareLatest(w http.ResponseWriter, r *http.Request) {
+	runtime, link, ok := api.shareTokenLink(r, r.URL.Query().Get("token"))
+	if !ok {
+		shareJSON(w, http.StatusGone, map[string]string{"error": "分享链接无效或已过期"})
+		return
+	}
+	data := runtime.mailbox.MessagesDetailed(shareAlias(link.Alias), 1)
+	items, _ := data["messages"].([]MailMessage)
+	if len(items) == 0 {
+		shareJSON(w, http.StatusNotFound, map[string]string{"error": "该邮箱暂无邮件"})
+		return
+	}
+	shareJSON(w, http.StatusOK, map[string]any{
+		"alias":     shareAlias(link.Alias),
+		"expiresAt": link.ExpiresAt,
+		"message":   items[0],
+	})
+}
+
 func (api *routeAPI) shareMessages(w http.ResponseWriter, r *http.Request) {
 	runtime, link, ok := api.sharedLink(r)
 	if !ok {

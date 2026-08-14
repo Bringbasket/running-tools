@@ -1,9 +1,21 @@
 package mail
 
 import (
+	"net/url"
 	"strings"
 	"testing"
 )
+
+func shareTokenFromURL(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	if token := parsed.Query().Get("token"); token != "" {
+		return token
+	}
+	return strings.TrimSpace(parsed.Fragment)
+}
 
 func TestShareLinkStoresOnlyDigestAndUsesSessionToken(t *testing.T) {
 	store := NewShareLinkStore(t.TempDir())
@@ -15,7 +27,10 @@ func TestShareLinkStoresOnlyDigestAndUsesSessionToken(t *testing.T) {
 	if !ok || len(url) < 10 {
 		t.Fatalf("missing share url: %#v", result)
 	}
-	token := url[strings.LastIndex(url, "#")+1:]
+	if !strings.HasPrefix(url, "/share/#") {
+		t.Fatalf("share url must keep the hash-token format, got %q", url)
+	}
+	token := shareTokenFromURL(url)
 	session, link, ok := store.CreateSession(token, 3600)
 	if !ok || session == "" || link.Alias != "demo@icloud.com" {
 		t.Fatalf("session exchange failed")
