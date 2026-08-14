@@ -211,8 +211,10 @@ Apple Account 管理态过期或首次返回认证失效时，服务会在确认
 {"enabled":true,"intervalSeconds":600}
 ```
 
-`intervalSeconds` 最小为 300 秒。检测到 HTTP 401、403 或 421 等认证失效结果
-时，自动刷新会自行关闭，并在状态中标记需要重新导入 Session。
+`intervalSeconds` 最小为 300 秒。Apple Account 还会读取管理接口返回的短 TTL，按安全提前量
+把下一次检查提前；因此实际 `nextRunAt` 可能早于配置的固定间隔。iCloud Web 长 Session
+仍独立检查。只有主 Session 需要重新导入时才会关闭自动刷新，Apple Account 单独失败会保留
+Worker 并在 `lastError` 和使用日志中记录，等待下一轮恢复。
 
 ### 自动创建计划
 

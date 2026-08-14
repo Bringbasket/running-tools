@@ -25,6 +25,8 @@ validate 响应生成 DSID、maildomainws 主机、构建号和 Cookie。
 `Apple Account` 是 Apple 账号管理网页使用的短时内部接口，需要 Cookie、`scnt`、Session
 ID 和动态 API Key。邮箱列表、编辑、启停和删除优先使用该通道；不可用时在仍有有效 iCloud
 Web 主会话的情况下回退旧接口。服务会在自动 Session 检查时刷新状态；接口失效后必须重新登录。
+管理接口返回的 `timeOutInterval` 会用于计算安全刷新时间，Worker 会在过期前提前续期，
+而不是固定等到管理态已经失效后才请求。
 它不是 Apple 正式公开、承诺兼容的 API，不能根据第三方项目的测试结果承诺固定配额。
 
 ## 创建策略

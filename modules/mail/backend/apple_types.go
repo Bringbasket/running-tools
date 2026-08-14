@@ -12,11 +12,16 @@ import (
 )
 
 const (
-	AppleChannelICloudWeb    = "icloud_web"
-	AppleChannelAccount      = "apple_account"
-	AppleTwoFactorDevice     = "trusted_device"
-	AppleTwoFactorPhone      = "phone"
-	appleLoginPendingTTL     = 10 * time.Minute
+	AppleChannelICloudWeb = "icloud_web"
+	AppleChannelAccount   = "apple_account"
+	AppleTwoFactorDevice  = "trusted_device"
+	AppleTwoFactorPhone   = "phone"
+	appleLoginPendingTTL  = 10 * time.Minute
+	// Apple Account's manage token is short-lived. Refresh it before the
+	// advertised deadline so a request is not started with a nearly expired
+	// token. The effective lead is reduced for very short TTLs below.
+	appleAccountRefreshLead  = 2 * time.Minute
+	appleAccountMinimumLead  = 30 * time.Second
 	appleAuthUserAgent       = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3.1 Safari/605.1.15"
 	appleAccountUserAgent    = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"
 	appleWebOAuthClientID    = "d39ba9916b7251055b22c7f910e2ea796ee65e98b2ddecea8f5dde8d9d1a815d"
@@ -60,6 +65,27 @@ type AppleAccountState struct {
 	LastCheckedAt     time.Time            `json:"lastCheckedAt,omitempty"`
 	LastCheckOK       bool                 `json:"lastCheckOk,omitempty"`
 	LastStatusMessage string               `json:"lastStatusMessage,omitempty"`
+}
+
+func (state AppleAccountState) refreshDueAt(now time.Time) time.Time {
+	if state.ManageExpiresAt.IsZero() {
+		return now
+	}
+	lead := appleAccountRefreshLead
+	if !state.LastCheckedAt.IsZero() {
+		ttl := state.ManageExpiresAt.Sub(state.LastCheckedAt)
+		if ttl > 0 && ttl/3 < lead {
+			lead = ttl / 3
+		}
+	}
+	if lead < appleAccountMinimumLead {
+		lead = appleAccountMinimumLead
+	}
+	return state.ManageExpiresAt.Add(-lead)
+}
+
+func (state AppleAccountState) needsRefresh(now time.Time) bool {
+	return strings.TrimSpace(state.APIKey) == "" || state.refreshDueAt(now).Compare(now) <= 0
 }
 
 type AppleChannelStatus struct {

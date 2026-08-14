@@ -66,6 +66,7 @@ func (client *Client) ListAliases(ctx context.Context) ([]map[string]any, error)
 	for _, entry := range raw {
 		alias, ok := entry.(map[string]any)
 		if ok {
+			normalizeAliasTimestamp(alias)
 			aliases = append(aliases, alias)
 		}
 	}

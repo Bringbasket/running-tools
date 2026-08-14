@@ -69,7 +69,8 @@ Cookie 在生产模式保存在 PostgreSQL `running_state` 中；旧 `hme-config
 
 ## 自动刷新
 
-默认启用，默认间隔为 600 秒，最小间隔为 300 秒。可以使用环境变量
+默认启用，默认间隔为 600 秒，最小间隔为 300 秒。Apple Account 还会根据管理态返回的短 TTL
+提前刷新，不会机械地等到固定间隔或过期后才请求。可以使用环境变量
 `MAIL_AUTO_REFRESH_INTERVAL` 修改首次生成配置时的默认间隔。
 
 检测到 Apple 返回 HTTP 401、403 或 421 后，自动刷新会关闭并记录需要重新导入

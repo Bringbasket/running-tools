@@ -151,9 +151,10 @@ func (client *AppleAuthClient) refreshAppleAccountState(ctx context.Context, sta
 	if scnt != "" {
 		state.Scnt = scnt
 	}
+	updateAppleAccountExpiry(state, token.TimeOutInterval)
 	if err != nil {
 		if warmErr := client.warmAppleAccount(ctx, state); warmErr != nil {
-			state.LastCheckOK, state.LastStatusMessage, state.LastCheckedAt = false, err.Error(), time.Now()
+			state.LastCheckOK, state.LastStatusMessage, state.LastCheckedAt = false, warmErr.Error(), time.Now()
 			return err
 		}
 		err = client.refreshAppleAccountTokenWithoutScnt(ctx, state, &token)
@@ -161,27 +162,31 @@ func (client *AppleAuthClient) refreshAppleAccountState(ctx context.Context, sta
 			state.LastCheckOK, state.LastStatusMessage, state.LastCheckedAt = false, err.Error(), time.Now()
 			return err
 		}
-	}
-	if token.TimeOutInterval > 0 {
-		state.ManageExpiresAt = time.Now().Add(time.Duration(token.TimeOutInterval) * time.Minute)
+		updateAppleAccountExpiry(state, token.TimeOutInterval)
 	}
 	manageErr := client.loadAppleAccountAPIKey(ctx, state)
 	if manageErr != nil || strings.TrimSpace(state.APIKey) == "" {
 		if warmErr := client.warmAppleAccount(ctx, state); warmErr != nil {
 			if manageErr != nil {
+				state.LastCheckOK, state.LastStatusMessage, state.LastCheckedAt = false, manageErr.Error(), time.Now()
 				return manageErr
 			}
+			state.LastCheckOK, state.LastStatusMessage, state.LastCheckedAt = false, warmErr.Error(), time.Now()
 			return warmErr
 		}
 		if err := client.refreshAppleAccountTokenWithoutScnt(ctx, state, &token); err != nil {
+			state.LastCheckOK, state.LastStatusMessage, state.LastCheckedAt = false, err.Error(), time.Now()
 			return err
 		}
+		updateAppleAccountExpiry(state, token.TimeOutInterval)
 		manageErr = client.loadAppleAccountAPIKey(ctx, state)
 		if manageErr != nil {
+			state.LastCheckOK, state.LastStatusMessage, state.LastCheckedAt = false, manageErr.Error(), time.Now()
 			return manageErr
 		}
 	}
 	if strings.TrimSpace(state.APIKey) == "" {
+		state.LastCheckOK, state.LastCheckedAt = false, time.Now()
 		return appleProtocolError("APPLE_ACCOUNT_API_KEY_MISSING", "Apple Account 未返回动态接口密钥，请重新登录", true)
 	}
 	if _, err := client.appleAccountRequest(ctx, state, http.MethodGet, "/account/manage/forwardemail", state.APIKey, nil, nil); err != nil {
@@ -213,9 +218,8 @@ func (client *AppleAuthClient) loadAppleAccountAPIKey(ctx context.Context, state
 	if _, err := client.appleAccountRequest(ctx, state, http.MethodGet, "/account/manage", "", nil, &manage); err != nil {
 		return err
 	}
-	if strings.TrimSpace(manage.APIKey) != "" {
-		state.APIKey = strings.TrimSpace(manage.APIKey)
-	}
+	// Do not retain an old key when the manage response no longer contains one.
+	state.APIKey = strings.TrimSpace(manage.APIKey)
 	return nil
 }
 
@@ -281,10 +285,17 @@ func (client *AppleAuthClient) ensureAppleAccountReady(ctx context.Context, stat
 	if state == nil || len(state.Cookies) == 0 {
 		return appleProtocolError("APPLE_ACCOUNT_SESSION_MISSING", "尚未登录 Apple Account", false)
 	}
-	if state.APIKey != "" && !state.ManageExpiresAt.IsZero() && time.Now().Before(state.ManageExpiresAt) {
+	if !state.needsRefresh(time.Now()) {
 		return nil
 	}
 	return client.refreshAppleAccountState(ctx, state)
+}
+
+func updateAppleAccountExpiry(state *AppleAccountState, timeoutMinutes int) {
+	if state == nil || timeoutMinutes <= 0 {
+		return
+	}
+	state.ManageExpiresAt = time.Now().Add(time.Duration(timeoutMinutes) * time.Minute)
 }
 
 func normalizeAppleAccountAlias(item map[string]any, defaultForward string) map[string]any {
@@ -297,13 +308,11 @@ func normalizeAppleAccountAlias(item map[string]any, defaultForward string) map[
 		"origin":         "APPLE_ACCOUNT",
 		"isActive":       true,
 	}
+	if timestamp, ok := aliasTimestampFromMap(item); ok {
+		alias["createTimestamp"] = timestamp
+	}
 	if active, ok := item["active"].(bool); ok {
 		alias["isActive"] = active
-	}
-	if created := stringValue(item["createdDate"]); created != "" {
-		if parsed, err := time.Parse(time.RFC3339, created); err == nil {
-			alias["createTimestamp"] = parsed.UnixMilli()
-		}
 	}
 	return alias
 }
@@ -324,8 +333,8 @@ func (client *AppleAuthClient) warmAppleAccount(ctx context.Context, state *Appl
 	var portal struct {
 		TimeOutInterval int `json:"timeOutInterval"`
 	}
-	if json.Unmarshal(data, &portal) == nil && portal.TimeOutInterval > 0 {
-		state.ManageExpiresAt = time.Now().Add(time.Duration(portal.TimeOutInterval) * time.Minute)
+	if json.Unmarshal(data, &portal) == nil {
+		updateAppleAccountExpiry(state, portal.TimeOutInterval)
 	}
 	return nil
 }
@@ -557,7 +566,7 @@ func appleAccountRequestStage(path string) string {
 
 func (client *AppleAuthClient) CreateWithAppleAccount(ctx context.Context, state AppleAccountState, label, note string) (map[string]any, AppleAccountState, error) {
 	refreshedBeforeCreate := false
-	if state.APIKey == "" || state.ManageExpiresAt.IsZero() || time.Now().After(state.ManageExpiresAt) {
+	if state.needsRefresh(time.Now()) {
 		if err := client.refreshAppleAccountState(ctx, &state); err != nil {
 			return nil, state, err
 		}
@@ -606,6 +615,7 @@ func (client *AppleAuthClient) createWithAppleAccountState(ctx context.Context, 
 		"isActive":        completed.Active,
 		"origin":          "APPLE_ACCOUNT",
 		"detailConfirmed": false,
+		"createTimestamp": float64(time.Now().UnixMilli()),
 	}
 	if strings.TrimSpace(completed.ID) != "" {
 		var confirmed struct {

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Bringbasket/running-tools/internal/platform/storage"
 )
@@ -90,5 +91,30 @@ func TestAutoRefreshClampsMinimumInterval(t *testing.T) {
 	}
 	if config.IntervalSeconds != minimumRefreshInterval {
 		t.Fatalf("interval not clamped: %d", config.IntervalSeconds)
+	}
+}
+
+func TestAutoRefreshUsesAppleAccountExpiryBeforeConfiguredInterval(t *testing.T) {
+	root := t.TempDir()
+	manager := NewSessionManager(filepath.Join(root, "config.json"), root)
+	now := time.Now()
+	state := healthyAppleAccountState()
+	state.LastCheckedAt = now
+	state.ManageExpiresAt = now.Add(4 * time.Minute)
+	if err := storage.WriteJSON(manager.appleAccountPath, state, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	service := NewAutoRefresh(root, manager)
+	enabled := true
+	interval := 10 * 60
+	if _, err := service.Update(&enabled, &interval); err != nil {
+		t.Fatal(err)
+	}
+	status := service.Status()
+	if status.NextRunAt == nil || *status.NextRunAt >= float64(now.Add(10*time.Minute).Unix()) {
+		t.Fatalf("configured interval was not shortened for Apple Account expiry: %#v", status)
+	}
+	if status.RemainingSeconds == nil || *status.RemainingSeconds <= 0 {
+		t.Fatalf("unexpected Apple Account refresh countdown: %#v", status)
 	}
 }

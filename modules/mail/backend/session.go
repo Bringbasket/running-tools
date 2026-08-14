@@ -3,6 +3,7 @@ package mail
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,28 +35,31 @@ type SessionStatus struct {
 }
 
 type SessionManager struct {
-	mu                sync.RWMutex
-	configPath        string
-	metadataPath      string
-	statePath         string
-	appleAccountPath  string
-	createChannelPath string
-	appleAuth         *AppleAuthClient
-	appleOperation    sync.Mutex
-	createOperation   sync.Mutex
-	channelStateMu    sync.Mutex
-	newClient         func(ICloudConfig) (*Client, error)
+	mu                 sync.RWMutex
+	configPath         string
+	metadataPath       string
+	statePath          string
+	appleAccountPath   string
+	createChannelPath  string
+	aliasTimestampPath string
+	appleAuth          *AppleAuthClient
+	appleOperation     sync.Mutex
+	createOperation    sync.Mutex
+	aliasTimestampMu   sync.Mutex
+	channelStateMu     sync.Mutex
+	newClient          func(ICloudConfig) (*Client, error)
 }
 
 func NewSessionManager(configPath, stateDir string) *SessionManager {
 	return &SessionManager{
-		configPath:        configPath,
-		metadataPath:      filepath.Join(stateDir, "hme-session.json"),
-		statePath:         filepath.Join(stateDir, "session-state.json"),
-		appleAccountPath:  filepath.Join(stateDir, "apple-account-state.json"),
-		createChannelPath: filepath.Join(stateDir, "create-channels.json"),
-		appleAuth:         NewAppleAuthClient(),
-		newClient:         func(config ICloudConfig) (*Client, error) { return NewClient(config) },
+		configPath:         configPath,
+		metadataPath:       filepath.Join(stateDir, "hme-session.json"),
+		statePath:          filepath.Join(stateDir, "session-state.json"),
+		appleAccountPath:   filepath.Join(stateDir, "apple-account-state.json"),
+		createChannelPath:  filepath.Join(stateDir, "create-channels.json"),
+		aliasTimestampPath: filepath.Join(stateDir, "alias-timestamps.json"),
+		appleAuth:          NewAppleAuthClient(),
+		newClient:          func(config ICloudConfig) (*Client, error) { return NewClient(config) },
 	}
 }
 
@@ -73,6 +77,20 @@ func (manager *SessionManager) Status() SessionStatus {
 	manager.mu.RLock()
 	defer manager.mu.RUnlock()
 	return manager.statusLocked()
+}
+
+// appleAccountRefreshDueAt returns the earliest safe refresh time for the
+// short-lived Apple Account management session. A missing or incomplete state
+// is treated as due now so the worker can repair it on its next pass.
+func (manager *SessionManager) appleAccountRefreshDueAt(now time.Time) (time.Time, bool) {
+	var account AppleAccountState
+	if storage.ReadJSON(manager.appleAccountPath, &account) != nil || len(account.Cookies) == 0 {
+		return time.Time{}, false
+	}
+	if account.needsRefresh(now) {
+		return now, true
+	}
+	return account.refreshDueAt(now), true
 }
 
 func (manager *SessionManager) Check(ctx context.Context) SessionStatus {
@@ -233,6 +251,7 @@ func (manager *SessionManager) CreateAlias(ctx context.Context, label, note stri
 			manager.recordCreateSuccess(AppleChannelAccount)
 			manager.appleOperation.Unlock()
 			decorateCreateResult(alias, AppleChannelAccount, attempted)
+			manager.rememberAliasTimestamp(alias)
 			return alias, nil
 		}
 		manager.recordCreateFailure(AppleChannelAccount, err)
@@ -266,6 +285,7 @@ func (manager *SessionManager) CreateAlias(ctx context.Context, label, note stri
 	}
 	manager.recordCreateSuccess(AppleChannelICloudWeb)
 	decorateCreateResult(alias, AppleChannelICloudWeb, attempted)
+	manager.rememberAliasTimestamp(alias)
 	return alias, nil
 }
 
@@ -283,6 +303,7 @@ func (manager *SessionManager) listAliases(ctx context.Context) ([]map[string]an
 		_ = storage.WriteJSON(manager.appleAccountPath, updated, 0o600)
 		manager.appleOperation.Unlock()
 		if err == nil {
+			manager.enrichAliasTimestamps(ctx, aliases)
 			return aliases, AppleChannelAccount, nil
 		}
 		if !appleAccountAllowsWebFallback(err) {
@@ -301,6 +322,103 @@ func (manager *SessionManager) listAliases(ctx context.Context) ([]map[string]an
 	}
 	aliases, err := client.ListAliases(ctx)
 	return aliases, AppleChannelICloudWeb, err
+}
+
+func (manager *SessionManager) enrichAliasTimestamps(ctx context.Context, aliases []map[string]any) {
+	if len(aliases) == 0 {
+		return
+	}
+	manager.aliasTimestampMu.Lock()
+	defer manager.aliasTimestampMu.Unlock()
+	cache := map[string]float64{}
+	_ = storage.ReadJSON(manager.aliasTimestampPath, &cache)
+	missing := false
+	for _, alias := range aliases {
+		normalizeAliasTimestamp(alias)
+		if timestamp, ok := aliasTimestamp(alias["createTimestamp"]); ok {
+			cacheAliasTimestamp(cache, alias, timestamp)
+		} else if cached, ok := cachedAliasTimestamp(cache, alias); ok {
+			alias["createTimestamp"] = cached
+		} else {
+			missing = true
+		}
+	}
+	if missing {
+		if client, err := manager.Client(); err == nil {
+			if webAliases, err := client.ListAliases(ctx); err == nil {
+				for _, alias := range webAliases {
+					normalizeAliasTimestamp(alias)
+					timestamp, ok := aliasTimestamp(alias["createTimestamp"])
+					if !ok {
+						continue
+					}
+					cacheAliasTimestamp(cache, alias, timestamp)
+				}
+				for _, alias := range aliases {
+					if _, ok := aliasTimestamp(alias["createTimestamp"]); ok {
+						continue
+					}
+					if cached, ok := cachedAliasTimestamp(cache, alias); ok {
+						alias["createTimestamp"] = cached
+					}
+				}
+			}
+		}
+	}
+	if len(cache) > 0 {
+		_ = storage.WriteJSON(manager.aliasTimestampPath, cache, 0o600)
+	}
+}
+
+func (manager *SessionManager) rememberAliasTimestamp(alias map[string]any) {
+	normalizeAliasTimestamp(alias)
+	timestamp, ok := aliasTimestamp(alias["createTimestamp"])
+	if !ok || len(aliasTimestampKeys(alias)) == 0 {
+		return
+	}
+	manager.aliasTimestampMu.Lock()
+	defer manager.aliasTimestampMu.Unlock()
+	cache := map[string]float64{}
+	_ = storage.ReadJSON(manager.aliasTimestampPath, &cache)
+	cacheAliasTimestamp(cache, alias, timestamp)
+	_ = storage.WriteJSON(manager.aliasTimestampPath, cache, 0o600)
+}
+
+func aliasTimestampKeys(alias map[string]any) []string {
+	keys := make([]string, 0, 2)
+	if hme := strings.ToLower(aliasTimestampString(alias["hme"])); hme != "" {
+		keys = append(keys, "hme:"+hme)
+	}
+	if id := aliasTimestampString(alias["anonymousId"]); id != "" {
+		keys = append(keys, "id:"+id)
+	}
+	return keys
+}
+
+func aliasTimestampString(value any) string {
+	if value == nil {
+		return ""
+	}
+	text := strings.TrimSpace(fmt.Sprint(value))
+	if text == "<nil>" {
+		return ""
+	}
+	return text
+}
+
+func cacheAliasTimestamp(cache map[string]float64, alias map[string]any, timestamp float64) {
+	for _, key := range aliasTimestampKeys(alias) {
+		cache[key] = timestamp
+	}
+}
+
+func cachedAliasTimestamp(cache map[string]float64, alias map[string]any) (float64, bool) {
+	for _, key := range aliasTimestampKeys(alias) {
+		if timestamp, ok := cache[key]; ok {
+			return timestamp, true
+		}
+	}
+	return 0, false
 }
 
 func (manager *SessionManager) UpdateAlias(ctx context.Context, id, label, note string) (map[string]any, error) {

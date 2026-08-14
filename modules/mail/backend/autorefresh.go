@@ -13,8 +13,9 @@ import (
 )
 
 const (
-	defaultRefreshInterval = 600
-	minimumRefreshInterval = 300
+	defaultRefreshInterval  = 600
+	minimumRefreshInterval  = 300
+	autoRefreshPollInterval = 10 * time.Second
 )
 
 type AutoRefreshConfig struct {
@@ -57,15 +58,29 @@ func (service *AutoRefresh) Status() AutoRefreshConfig {
 	service.mu.Lock()
 	defer service.mu.Unlock()
 	config := service.loadLocked()
-	now := unixNow()
+	nowTime := time.Now()
+	now := float64(nowTime.UnixNano()) / float64(time.Second)
 	config.ServerNow = now
 	config.WorkerRunning = service.running
 	if config.Enabled {
 		base := now
+		hasLastRun := config.LastRunAt != nil
 		if config.LastRunAt != nil {
 			base = *config.LastRunAt
 		}
 		next := base + float64(config.IntervalSeconds)
+		// Apple Account management sessions expose a shorter, independent TTL.
+		// Keep the configured interval as the floor after a run, but pull the
+		// next check forward when the Apple deadline arrives first.
+		if due, ok := service.session.appleAccountRefreshDueAt(nowTime); ok {
+			dueAt := float64(due.UnixNano()) / float64(time.Second)
+			switch {
+			case !hasLastRun && dueAt <= now:
+				next = now
+			case dueAt > now && dueAt < next:
+				next = dueAt
+			}
+		}
 		remaining := max(0, int(next-now+0.5))
 		config.NextRunAt, config.RemainingSeconds = &next, &remaining
 	}
@@ -102,6 +117,9 @@ func (service *AutoRefresh) run(ctx context.Context, source string) (map[string]
 	config := service.loadLocked()
 	now := unixNow()
 	config.LastRunAt = &now
+	appleConfigured := status.AppleLogin.AppleAccount.Configured
+	appleHealthy := !appleConfigured || status.AppleLogin.AppleAccount.Healthy
+	checkHealthy := status.SessionValid && appleHealthy && !status.NeedsReauth
 	if status.NeedsReauth && !status.AppleLogin.AppleAccount.Healthy {
 		reason := "session requires re-import"
 		if status.LastError != nil {
@@ -110,11 +128,23 @@ func (service *AutoRefresh) run(ctx context.Context, source string) (map[string]
 		config.Enabled = false
 		config.LastDisabledAt = &now
 		config.DisabledReason, config.LastError = &reason, &reason
-	} else if status.SessionValid {
+	} else if checkHealthy {
 		config.LastSuccessAt = &now
 		config.LastError, config.DisabledReason = nil, nil
-	} else if status.LastError != nil {
-		config.LastError = status.LastError
+	} else {
+		// Keep an Apple Account failure visible even when the long-lived iCloud
+		// Web session itself is still valid. The worker must continue retrying
+		// this short-lived channel instead of disabling the whole service.
+		message := ""
+		if !appleHealthy {
+			message = status.AppleLogin.AppleAccount.Message
+		}
+		if message == "" && status.LastError != nil {
+			message = *status.LastError
+		}
+		if message != "" {
+			config.LastError = &message
+		}
 	}
 	if err := storage.WriteJSON(service.path, persistentAutoRefresh(config), 0o600); err != nil {
 		return nil, err
@@ -122,10 +152,13 @@ func (service *AutoRefresh) run(ctx context.Context, source string) (map[string]
 	if service.logs != nil && source == "background" {
 		level, outcome, summary := "info", "success", "Session 自动检测正常"
 		detail := ""
-		if !status.SessionValid || status.NeedsReauth {
+		if !checkHealthy {
 			level, outcome, summary = "error", "failure", "Session 自动检测发现登录失效"
 			if status.LastError != nil {
 				detail = *status.LastError
+			}
+			if detail == "" && !appleHealthy {
+				detail = status.AppleLogin.AppleAccount.Message
 			}
 		}
 		if service.lastLoggedState != outcome {
@@ -148,7 +181,7 @@ func (service *AutoRefresh) Start() {
 	service.mu.Unlock()
 	go func() {
 		defer close(done)
-		ticker := time.NewTicker(30 * time.Second)
+		ticker := time.NewTicker(autoRefreshPollInterval)
 		defer ticker.Stop()
 		for {
 			select {
