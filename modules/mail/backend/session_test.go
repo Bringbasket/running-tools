@@ -80,6 +80,32 @@ func TestSessionCheckMarksUnauthorizedSessionForReimport(t *testing.T) {
 	}
 }
 
+func TestSessionCheckPersistsRolledCookieOnUnauthorizedResponse(t *testing.T) {
+	root := t.TempDir()
+	configPath := filepath.Join(root, "hme-config.json")
+	if err := storage.WriteJSON(configPath, testConfig(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.SetCookie(w, &http.Cookie{Name: "SESSION", Value: "renewed", Path: "/"})
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"reason":"Invalid global session"}`))
+	}))
+	defer server.Close()
+	manager := NewSessionManager(configPath, filepath.Join(root, "state"))
+	manager.newClient = func(config ICloudConfig) (*Client, error) {
+		return NewClient(config, WithBaseURL(server.URL), WithHTTPClient(server.Client()))
+	}
+	status := manager.Check(context.Background())
+	if !status.NeedsReauth {
+		t.Fatalf("unexpected status: %#v", status)
+	}
+	stored, err := LoadICloudConfig(configPath)
+	if err != nil || !strings.Contains(stored.Cookie, "SESSION=renewed") {
+		t.Fatalf("rolled cookie was not persisted: %q %v", stored.Cookie, err)
+	}
+}
+
 func TestAutoRefreshClampsMinimumInterval(t *testing.T) {
 	root := t.TempDir()
 	service := NewAutoRefresh(root, NewSessionManager(filepath.Join(root, "config.json"), root))

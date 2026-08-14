@@ -62,6 +62,7 @@ func (s *MailboxService) Settings() MailboxSettings {
 }
 
 func (s *MailboxService) UpdateSettings(input MailboxSettingsInput) (MailboxSettings, error) {
+	s.RequestSync()
 	s.syncMu.Lock()
 	defer s.syncMu.Unlock()
 	s.mu.Lock()
@@ -83,6 +84,7 @@ func (s *MailboxService) UpdateSettings(input MailboxSettingsInput) (MailboxSett
 		return MailboxSettings{}, fmt.Errorf("读取邮箱存储失败: %w", err)
 	}
 	if mailboxTargetChanged(current, next) {
+		s.closeIMAPConnectionLocked()
 		cache.Messages = []MailMessage{}
 		cache.Hidden = []string{}
 		cache.HighestUID = 0

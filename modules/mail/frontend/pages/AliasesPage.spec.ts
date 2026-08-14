@@ -5,12 +5,14 @@ import AliasesPage from './AliasesPage.vue'
 const mocks = vi.hoisted(() => ({
   aliases: vi.fn(),
   createSchedule: vi.fn(),
+  aliasAction: vi.fn(),
 }))
 
 vi.mock('../api', () => ({
   mailAPI: {
     aliases: mocks.aliases,
     createSchedule: mocks.createSchedule,
+    aliasAction: mocks.aliasAction,
   },
 }))
 
@@ -111,6 +113,30 @@ describe('邮箱列表分页', () => {
     await vi.advanceTimersByTimeAsync(10_000)
     expect(mocks.createSchedule).toHaveBeenCalledTimes(3)
 
+    wrapper.unmount()
+  })
+
+  it('删除邮箱必须输入完整地址确认', async () => {
+    const items = aliases(1)
+    mocks.aliases.mockResolvedValue(items)
+    mocks.createSchedule.mockResolvedValue({
+      enabled: false, running: false, batchSize: 5, aliasIntervalSeconds: 3,
+      intervalSeconds: 180, label: 'shopping', note: '',
+    })
+    mocks.aliasAction.mockResolvedValue({})
+    const wrapper = mount(AliasesPage, { global: { stubs: { Teleport: true } } })
+    await flushPromises()
+
+    await wrapper.get('button[title="删除邮箱"]').trigger('click')
+    const confirm = wrapper.get('#delete-alias-dialog .danger-confirm')
+    expect(confirm.attributes('disabled')).toBeDefined()
+    await wrapper.get('#delete-alias-dialog input').setValue(items[0].hme)
+    expect(wrapper.get('#delete-alias-dialog .danger-confirm').attributes('disabled')).toBeUndefined()
+    await wrapper.get('#delete-alias-dialog .danger-confirm').trigger('click')
+    await flushPromises()
+
+    expect(mocks.aliasAction).toHaveBeenCalledWith(items[0].anonymousId, 'delete')
+    expect(wrapper.find('#delete-alias-dialog').exists()).toBe(false)
     wrapper.unmount()
   })
 })

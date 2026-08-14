@@ -4,7 +4,6 @@ import { useRoute } from 'vue-router'
 import { LogOut, Menu, Moon, Sun } from '@lucide/vue'
 import { logout } from '../auth'
 import { modules } from '../modules'
-import AccountSwitcher from '../../../modules/mail/frontend/components/AccountSwitcher.vue'
 
 defineEmits<{ openNavigation: [] }>()
 const route = useRoute()
@@ -28,7 +27,6 @@ function toggleTheme() {
       <div class="header-breadcrumb"><span class="header-context">{{ section }}</span><span class="breadcrumb-divider">/</span><h1>{{ title }}</h1></div>
     </div>
     <div class="header-actions">
-      <AccountSwitcher v-if="route.path.startsWith('/mail/')" />
       <button class="icon-button" :title="dark ? '切换浅色模式' : '切换深色模式'" @click="toggleTheme"><Sun v-if="dark" :size="18" /><Moon v-else :size="18" /></button>
       <button class="icon-button" title="退出" @click="logout"><LogOut :size="18" /></button>
     </div>

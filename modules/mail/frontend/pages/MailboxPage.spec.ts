@@ -1,6 +1,7 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import MailboxPage from './MailboxPage.vue'
+import { toastState } from '../../../../frontend/src/toast'
 
 const mocks = vi.hoisted(() => ({
   mailboxRecent: vi.fn(),
@@ -38,7 +39,7 @@ function messages(count: number) {
 }
 
 describe('收件箱页面', () => {
-  afterEach(() => vi.restoreAllMocks())
+  afterEach(() => { vi.restoreAllMocks(); toastState.items = [] })
 
   it('支持分页、筛选和按需加载安全 HTML 详情', async () => {
     mocks.mailboxRecent.mockResolvedValue({
@@ -142,7 +143,7 @@ describe('收件箱页面', () => {
       enabled: true,
     }))
     expect(document.body.querySelector('.mailbox-settings-dialog')).toBeNull()
-    expect(wrapper.text()).toContain('IMAP 设置已保存')
+	expect(toastState.items.some((item) => item.message.includes('IMAP 设置已保存'))).toBe(true)
 
     wrapper.unmount()
   })

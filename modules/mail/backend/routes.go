@@ -17,15 +17,16 @@ import (
 )
 
 type routeAPI struct {
-	module     *Module
-	session    *SessionManager
-	refresh    *AutoRefresh
-	creation   *CreateScheduler
-	queue      *AliasQueue
-	shares     *ShareLinkStore
-	mailbox    *MailboxService
-	logs       *activitylog.Store
-	createGate *sync.Mutex
+	module          *Module
+	proxyTestTarget string
+	session         *SessionManager
+	refresh         *AutoRefresh
+	creation        *CreateScheduler
+	queue           *AliasQueue
+	shares          *ShareLinkStore
+	mailbox         *MailboxService
+	logs            *activitylog.Store
+	createGate      *sync.Mutex
 }
 
 func (api *routeAPI) register(mux *http.ServeMux, auth httpx.Middleware, base string, legacy bool) {
@@ -39,7 +40,17 @@ func (api *routeAPI) register(mux *http.ServeMux, auth httpx.Middleware, base st
 	}
 	if !legacy {
 		mux.Handle("GET "+base+"/accounts", auth(http.HandlerFunc(api.accounts)))
-		mux.Handle("POST "+base+"/accounts", auth(http.HandlerFunc(api.createAccount)))
+		accountAction := func(method, path string, handler http.HandlerFunc) {
+			wrapped := http.Handler(handler)
+			if definition, ok := mailLogDefinition(method, path); ok {
+				wrapped = api.activityLogMiddlewareWithStore(definition, method, base+path, api.accountUsageLogStore)(wrapped)
+			}
+			mux.Handle(method+" "+base+path, auth(wrapped))
+		}
+		accountAction(http.MethodPost, "/accounts", api.createAccount)
+		accountAction(http.MethodPost, "/accounts/{id}/proxy/test", api.testAccountProxy)
+		accountAction(http.MethodPut, "/accounts/{id}/proxy", api.updateAccountProxy)
+		accountAction(http.MethodDelete, "/accounts/{id}", api.deleteAccount)
 	}
 	protect(http.MethodGet, "/aliases", api.listAliases)
 	protect(http.MethodPost, "/aliases", api.createAlias)
@@ -144,6 +155,7 @@ func (api *routeAPI) mailboxSettingsTest(w http.ResponseWriter, r *http.Request)
 	httpx.WriteData(w, r, http.StatusOK, map[string]bool{"connected": true})
 }
 func (api *routeAPI) mailboxRun(w http.ResponseWriter, r *http.Request) {
+	api.mailboxFor(r).RequestSync()
 	aliases, err := api.sessionFor(r).ListAliases(r.Context())
 	if err != nil {
 		api.writeMailError(w, r, err)

@@ -111,6 +111,35 @@ func TestClientExplainsEmptyUpstreamErrorBody(t *testing.T) {
 	}
 }
 
+func TestClientRollsResponseCookiesIntoFollowingRequests(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if requests == 1 {
+			http.SetCookie(w, &http.Cookie{Name: "SESSION", Value: "renewed", Path: "/"})
+			http.SetCookie(w, &http.Cookie{Name: "FRESH", Value: "value", Path: "/"})
+		} else if cookie := r.Header.Get("Cookie"); !strings.Contains(cookie, "SESSION=renewed") || !strings.Contains(cookie, "FRESH=value") {
+			t.Fatalf("rolled cookies were not sent: %q", cookie)
+		}
+		_, _ = w.Write([]byte(`{"success":true,"result":{"hmeEmails":[]}}`))
+	}))
+	defer server.Close()
+	client, err := NewClient(testConfig(), WithBaseURL(server.URL), WithHTTPClient(server.Client()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.ListAliases(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.ListAliases(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	config, changed := client.ConfigUpdate()
+	if !changed || !strings.Contains(config.Cookie, "SESSION=renewed") || strings.Contains(config.Cookie, "SESSION=secret") {
+		t.Fatalf("unexpected rolled config: changed=%v cookie=%q", changed, config.Cookie)
+	}
+}
+
 func stringsContains(value, needle string) bool {
 	for index := 0; index+len(needle) <= len(value); index++ {
 		if value[index:index+len(needle)] == needle {

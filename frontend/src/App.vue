@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import AppHeader from './components/AppHeader.vue'
 import AppSidebar from './components/AppSidebar.vue'
 import LoginDialog from './components/LoginDialog.vue'
+import ToastHost from './components/ToastHost.vue'
 
 const collapsed = ref(false)
 const mobileOpen = ref(false)
@@ -18,5 +19,6 @@ const mobileOpen = ref(false)
       </main>
     </div>
     <LoginDialog />
+    <ToastHost />
   </div>
 </template>

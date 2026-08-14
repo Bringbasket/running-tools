@@ -23,8 +23,18 @@ const (
 
 type AppleAuthClient struct {
 	httpClient *http.Client
+	httpMu     sync.RWMutex
 	pendingMu  sync.Mutex
 	pending    map[string]appleAuthPending
+}
+
+func (client *AppleAuthClient) SetHTTPClient(httpClient *http.Client) {
+	if httpClient == nil {
+		return
+	}
+	client.httpMu.Lock()
+	client.httpClient = httpClient
+	client.httpMu.Unlock()
 }
 
 type appleSRPInitResponse struct {
@@ -457,7 +467,10 @@ func (client *AppleAuthClient) do(ctx context.Context, session *appleAuthSession
 	if cookie := appleCookieHeader(session.Cookies, rawURL); cookie != "" {
 		request.Header.Set("Cookie", cookie)
 	}
-	response, err := client.httpClient.Do(request)
+	client.httpMu.RLock()
+	httpClient := client.httpClient
+	client.httpMu.RUnlock()
+	response, err := httpClient.Do(request)
 	if err != nil {
 		return 0, nil, fmt.Errorf("Apple 网络请求失败: %w", err)
 	}

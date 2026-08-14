@@ -67,7 +67,7 @@
   }
 
   body {
-    min-width: 320px;
+    min-width: 0;
     overflow-x: hidden;
     background: var(--app-bg);
     color: var(--text);

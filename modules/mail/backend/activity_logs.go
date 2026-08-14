@@ -17,6 +17,10 @@ type mailLogEvent struct {
 }
 
 var mailLogEvents = map[string]mailLogEvent{
+	"POST /accounts":                   {"account", "account.create", "添加母号"},
+	"POST /accounts/{id}/proxy/test":   {"account", "account.proxy.test", "测试代理连接"},
+	"PUT /accounts/{id}/proxy":         {"account", "account.proxy.update", "保存账号代理"},
+	"DELETE /accounts/{id}":            {"account", "account.delete", "删除母号"},
 	"GET /aliases":                     {"alias", "alias.list", "读取邮箱列表"},
 	"POST /aliases":                    {"alias", "alias.create", "创建隐藏邮箱"},
 	"GET /aliases/export.csv":          {"alias", "alias.export", "导出邮箱列表"},
@@ -54,9 +58,14 @@ func mailLogDefinition(method, path string) (mailLogEvent, bool) {
 }
 
 func (api *routeAPI) activityLogMiddleware(event mailLogEvent, method, path string) func(http.Handler) http.Handler {
+	return api.activityLogMiddlewareWithStore(event, method, path, api.logsFor)
+}
+
+func (api *routeAPI) activityLogMiddlewareWithStore(event mailLogEvent, method, path string, storeFor func(*http.Request) *activitylog.Store) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			started := time.Now()
+			logs := storeFor(r)
 			recorder := &activityStatusRecorder{ResponseWriter: w, status: http.StatusOK}
 			next.ServeHTTP(recorder, r)
 			outcome, level, summary := "success", "info", event.Summary+"成功"
@@ -68,7 +77,7 @@ func (api *routeAPI) activityLogMiddleware(event mailLogEvent, method, path stri
 					level = "warning"
 				}
 			}
-			if logs := api.logsFor(r); logs != nil {
+			if logs != nil {
 				logs.Record(r.Context(), activitylog.Input{Category: event.Category, Action: event.Action, Level: level, Outcome: outcome,
 					Summary: summary, Source: "user", Method: method, Path: path, HTTPStatus: recorder.status,
 					DurationMS: time.Since(started).Milliseconds(), RequestID: httpx.RequestID(r.Context()),
@@ -76,6 +85,28 @@ func (api *routeAPI) activityLogMiddleware(event mailLogEvent, method, path stri
 			}
 		})
 	}
+}
+
+// Account management requests are attributed to the account selected in the
+// client. When that account is being deleted, record the event in default so
+// the audit entry remains available after deletion.
+func (api *routeAPI) accountUsageLogStore(r *http.Request) *activitylog.Store {
+	if api.module == nil {
+		return api.logsFor(r)
+	}
+	accountID := strings.TrimSpace(r.Header.Get("X-Mail-Account-ID"))
+	targetID := strings.TrimSpace(r.PathValue("id"))
+	if r.Method == http.MethodDelete && targetID != "" && targetID == accountID {
+		accountID = defaultMailAccountID
+	}
+	runtime, ok := api.module.runtime(accountID)
+	if !ok {
+		runtime, _ = api.module.runtime(defaultMailAccountID)
+	}
+	if runtime == nil {
+		return nil
+	}
+	return runtime.logs
 }
 
 type activityStatusRecorder struct {

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -35,23 +37,28 @@ type SessionStatus struct {
 }
 
 type SessionManager struct {
-	mu                 sync.RWMutex
-	configPath         string
-	metadataPath       string
-	statePath          string
-	appleAccountPath   string
-	createChannelPath  string
-	aliasTimestampPath string
-	appleAuth          *AppleAuthClient
-	appleOperation     sync.Mutex
-	createOperation    sync.Mutex
-	aliasTimestampMu   sync.Mutex
-	channelStateMu     sync.Mutex
-	newClient          func(ICloudConfig) (*Client, error)
+	mu                  sync.RWMutex
+	configPath          string
+	metadataPath        string
+	statePath           string
+	appleAccountPath    string
+	createChannelPath   string
+	aliasTimestampPath  string
+	appleAuth           *AppleAuthClient
+	appleOperation      sync.Mutex
+	appleLoginOperation sync.Mutex
+	webOperation        sync.Mutex
+	createOperation     sync.Mutex
+	aliasTimestampMu    sync.Mutex
+	channelStateMu      sync.Mutex
+	proxyURL            string
+	httpClient          *http.Client
+	newClient           func(ICloudConfig) (*Client, error)
 }
 
 func NewSessionManager(configPath, stateDir string) *SessionManager {
-	return &SessionManager{
+	httpClient, _ := httpClientForProxy("")
+	manager := &SessionManager{
 		configPath:         configPath,
 		metadataPath:       filepath.Join(stateDir, "hme-session.json"),
 		statePath:          filepath.Join(stateDir, "session-state.json"),
@@ -59,18 +66,70 @@ func NewSessionManager(configPath, stateDir string) *SessionManager {
 		createChannelPath:  filepath.Join(stateDir, "create-channels.json"),
 		aliasTimestampPath: filepath.Join(stateDir, "alias-timestamps.json"),
 		appleAuth:          NewAppleAuthClient(),
-		newClient:          func(config ICloudConfig) (*Client, error) { return NewClient(config) },
+		httpClient:         httpClient,
 	}
+	manager.newClient = func(config ICloudConfig) (*Client, error) {
+		manager.mu.RLock()
+		client := manager.httpClient
+		manager.mu.RUnlock()
+		return NewClient(config, WithHTTPClient(client))
+	}
+	manager.appleAuth.SetHTTPClient(httpClient)
+	return manager
 }
 
 func (manager *SessionManager) Client() (*Client, error) {
 	manager.mu.RLock()
-	defer manager.mu.RUnlock()
 	config, err := LoadICloudConfig(manager.configPath)
+	newClient := manager.newClient
+	manager.mu.RUnlock()
 	if err != nil {
 		return nil, err
 	}
-	return manager.newClient(config)
+	return newClient(config)
+}
+
+func (manager *SessionManager) SetProxy(raw string) error {
+	proxyURL, err := normalizeProxyURL(raw)
+	if err != nil {
+		return err
+	}
+	httpClient, err := httpClientForProxy(proxyURL)
+	if err != nil {
+		return err
+	}
+	manager.appleLoginOperation.Lock()
+	defer manager.appleLoginOperation.Unlock()
+	manager.appleOperation.Lock()
+	defer manager.appleOperation.Unlock()
+	manager.webOperation.Lock()
+	defer manager.webOperation.Unlock()
+	manager.mu.Lock()
+	previous := manager.httpClient
+	manager.proxyURL = proxyURL
+	manager.httpClient = httpClient
+	manager.mu.Unlock()
+	manager.appleAuth.SetHTTPClient(httpClient)
+	if previous != nil {
+		previous.CloseIdleConnections()
+	}
+	return nil
+}
+
+func (manager *SessionManager) persistClientConfig(client *Client) {
+	config, changed := client.ConfigUpdate()
+	if !changed {
+		return
+	}
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+	current, err := LoadICloudConfig(manager.configPath)
+	if err == nil && current.Cookie == config.Cookie {
+		return
+	}
+	if err := storage.WriteJSON(manager.configPath, config, 0o600); err != nil {
+		slog.Warn("iCloud Web Cookie 续存失败", "error", safeErrorText(err))
+	}
 }
 
 func (manager *SessionManager) Status() SessionStatus {
@@ -94,21 +153,21 @@ func (manager *SessionManager) appleAccountRefreshDueAt(now time.Time) (time.Tim
 }
 
 func (manager *SessionManager) Check(ctx context.Context) SessionStatus {
-	manager.mu.Lock()
+	manager.mu.RLock()
 	status := manager.statusLocked()
+	manager.mu.RUnlock()
 	now := unixNow()
-	config, err := LoadICloudConfig(manager.configPath)
+	manager.webOperation.Lock()
+	client, err := manager.Client()
 	if err == nil {
-		var client *Client
-		client, err = manager.newClient(config)
+		var hme map[string]any
+		hme, err = client.Check(ctx)
+		manager.persistClientConfig(client)
 		if err == nil {
-			var hme map[string]any
-			hme, err = client.Check(ctx)
-			if err == nil {
-				status.SessionState = SessionState{SessionValid: true, LastRefreshAt: &now, LastValidAt: &now, ExpiresHint: "apple-controlled", HME: hme}
-			}
+			status.SessionState = SessionState{SessionValid: true, LastRefreshAt: &now, LastValidAt: &now, ExpiresHint: "apple-controlled", HME: hme}
 		}
 	}
+	manager.webOperation.Unlock()
 	if err != nil {
 		message := safeErrorText(err)
 		status.SessionValid = false
@@ -119,6 +178,7 @@ func (manager *SessionManager) Check(ctx context.Context) SessionStatus {
 			status.NeedsReauth = false
 		}
 	}
+	manager.mu.Lock()
 	_ = storage.WriteJSON(manager.statePath, status.SessionState, 0o600)
 	manager.mu.Unlock()
 	manager.appleOperation.Lock()
@@ -144,6 +204,8 @@ func appleAliasSummary(aliases []map[string]any) map[string]any {
 }
 
 func (manager *SessionManager) StartAppleLogin(ctx context.Context, input AppleLoginStartInput, expectedDSID string) (AppleLoginStartResult, error) {
+	manager.appleLoginOperation.Lock()
+	defer manager.appleLoginOperation.Unlock()
 	result, err := manager.appleAuth.Start(ctx, input)
 	if err != nil {
 		return AppleLoginStartResult{}, err
@@ -160,6 +222,8 @@ func (manager *SessionManager) StartAppleLogin(ctx context.Context, input AppleL
 }
 
 func (manager *SessionManager) VerifyAppleLogin(ctx context.Context, pendingID, code, expectedDSID string) (AppleLoginStartResult, error) {
+	manager.appleLoginOperation.Lock()
+	defer manager.appleLoginOperation.Unlock()
 	result, err := manager.appleAuth.Verify(ctx, pendingID, code)
 	if err != nil {
 		return AppleLoginStartResult{}, err
@@ -270,6 +334,8 @@ func (manager *SessionManager) CreateAlias(ctx context.Context, label, note stri
 		}
 		return nil, appleProtocolError("ICLOUD_WEB_COOLDOWN", "iCloud Web 创建通道仍在限额冷却中，请稍后再试", true)
 	}
+	manager.webOperation.Lock()
+	defer manager.webOperation.Unlock()
 	client, err := manager.Client()
 	if err != nil {
 		if accountErr != nil {
@@ -277,6 +343,7 @@ func (manager *SessionManager) CreateAlias(ctx context.Context, label, note stri
 		}
 		return nil, err
 	}
+	defer manager.persistClientConfig(client)
 	attempted = append(attempted, AppleChannelICloudWeb)
 	alias, webErr := client.CreateAlias(ctx, label, note)
 	if webErr != nil {
@@ -313,6 +380,8 @@ func (manager *SessionManager) listAliases(ctx context.Context) ([]map[string]an
 	} else {
 		manager.appleOperation.Unlock()
 	}
+	manager.webOperation.Lock()
+	defer manager.webOperation.Unlock()
 	client, err := manager.Client()
 	if err != nil {
 		if accountErr != nil {
@@ -320,6 +389,7 @@ func (manager *SessionManager) listAliases(ctx context.Context) ([]map[string]an
 		}
 		return nil, AppleChannelICloudWeb, err
 	}
+	defer manager.persistClientConfig(client)
 	aliases, err := client.ListAliases(ctx)
 	return aliases, AppleChannelICloudWeb, err
 }
@@ -344,7 +414,10 @@ func (manager *SessionManager) enrichAliasTimestamps(ctx context.Context, aliase
 		}
 	}
 	if missing {
+		manager.webOperation.Lock()
+		defer manager.webOperation.Unlock()
 		if client, err := manager.Client(); err == nil {
+			defer manager.persistClientConfig(client)
 			if webAliases, err := client.ListAliases(ctx); err == nil {
 				for _, alias := range webAliases {
 					normalizeAliasTimestamp(alias)
@@ -430,10 +503,13 @@ func (manager *SessionManager) UpdateAlias(ctx context.Context, id, label, note 
 		_ = storage.WriteJSON(manager.appleAccountPath, updated, 0o600)
 		return result, err
 	}
+	manager.webOperation.Lock()
+	defer manager.webOperation.Unlock()
 	client, err := manager.Client()
 	if err != nil {
 		return nil, err
 	}
+	defer manager.persistClientConfig(client)
 	return client.UpdateAlias(ctx, id, label, note)
 }
 
@@ -446,10 +522,13 @@ func (manager *SessionManager) SetAliasActive(ctx context.Context, id string, ac
 		_ = storage.WriteJSON(manager.appleAccountPath, updated, 0o600)
 		return result, err
 	}
+	manager.webOperation.Lock()
+	defer manager.webOperation.Unlock()
 	client, err := manager.Client()
 	if err != nil {
 		return nil, err
 	}
+	defer manager.persistClientConfig(client)
 	return client.SetAliasActive(ctx, id, active)
 }
 
@@ -462,10 +541,13 @@ func (manager *SessionManager) DeleteAlias(ctx context.Context, id string) (map[
 		_ = storage.WriteJSON(manager.appleAccountPath, updated, 0o600)
 		return result, err
 	}
+	manager.webOperation.Lock()
+	defer manager.webOperation.Unlock()
 	client, err := manager.Client()
 	if err != nil {
 		return nil, err
 	}
+	defer manager.persistClientConfig(client)
 	return client.DeleteAlias(ctx, id)
 }
 

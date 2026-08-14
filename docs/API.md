@@ -43,7 +43,7 @@ JSON 接口统一使用以下响应结构：
 
 ## 邮件接口
 
-邮件模块支持多个 iCloud 账号。除账号列表和创建账号外，标准邮件接口必须携带当前账号：
+邮件模块支持多个 iCloud 账号。除账号管理接口外，标准邮件接口必须携带当前账号：
 
 ```http
 X-Mail-Account-ID: default
@@ -56,6 +56,9 @@ X-Mail-Account-ID: default
 | --- | --- | --- |
 | GET | `/api/mail/v1/accounts` | 获取邮件账号列表 |
 | POST | `/api/mail/v1/accounts` | 新建独立邮件账号运行空间 |
+| POST | `/api/mail/v1/accounts/{id}/proxy/test` | 测试指定母号的候选代理，不保存配置 |
+| PUT | `/api/mail/v1/accounts/{id}/proxy` | 设置或清除指定母号的独立代理 |
+| DELETE | `/api/mail/v1/accounts/{id}` | 永久删除非默认账号及其数据 |
 | GET | `/api/mail/v1/aliases` | 获取隐藏邮箱列表 |
 | POST | `/api/mail/v1/aliases` | 创建隐藏邮箱 |
 | GET | `/api/mail/v1/aliases/export.csv` | 直接下载 CSV 文件 |
@@ -91,6 +94,29 @@ X-Mail-Account-ID: default
 | POST | `/api/mail/v1/mail/messages/hide-batch` | 批量从本地缓存隐藏邮件 |
 | POST | `/api/mail/v1/mail/messages/clear` | 永久清理当前账号的 SQL 邮件缓存 |
 | GET | `/api/mail/v1/mail/sync/wait` | 等待缓存 revision 变化 |
+
+删除母号会先停止该账号的 Session 自动刷新、自动创建、批量队列和 IMAP Worker，再永久清理
+PostgreSQL 中对应的 Session/任务状态、邮件缓存、分享链接和使用日志。默认账号 `default`
+承载旧数据兼容，接口会拒绝删除。该操作不可恢复，且不会影响其他母号的后台任务。
+
+账号列表返回 `status`、`statusMessage`、`icloudWeb`、`appleAccount`、`mailbox`、自动刷新、
+自动创建、批量队列和 `aliasCount` 健康摘要。`status` 为 `active`、`warning`、`pending`
+或 `error`。这些状态从各账号当前运行态实时汇总，不另存一份会过期的健康数据。
+
+独立代理请求示例：
+
+```json
+{"proxy":"socks5://user:password@127.0.0.1:1080"}
+```
+
+支持 `http`、`https` 和 `socks5`；提交空字符串清除代理。代理同时用于该母号的 Apple
+协议登录、Apple Account 管理接口和 iCloud Web HME 接口。列表和更新响应只返回
+`hasProxy`，绝不回显代理地址、用户名或密码。
+
+前端保存代理前会先调用 `/accounts/{id}/proxy/test`，由服务端通过候选代理访问 Apple 官方站点。
+测试请求最长等待 15 秒，HTTP 200–399 判定为可用；测试不会写入 PostgreSQL，也不会替换当前
+账号的 HTTP Client。成功响应仅包含 `reachable`、`statusCode`、`latencyMs` 和目标主机名，
+不会回显代理地址或凭据。输入内容发生变化后，前端会立即作废上一次测试结果并重新禁用保存。
 
 ### 邮件系统使用日志
 
@@ -190,6 +216,9 @@ Apple 返回的账号国家或目标域名自动选择 `icloud.com` 或 `icloud.
 - `X-APPLE-WEBAUTH-TOKEN`
 
 Session 状态和错误响应不会返回持久化的 Cookie 内容。
+iCloud Web 响应中的 `Set-Cookie` 会按 Cookie 名合并到当前 Session 并立即写回 PostgreSQL，
+包括业务接口返回失败但同时下发新 Cookie 的情况。各母号的 Web 请求串行更新自己的 Cookie，
+不会互相覆盖，也不会把 Cookie 写入使用日志。
 
 ### 创建通道
 
@@ -259,7 +288,9 @@ App 专用密码，不能使用 Apple ID 登录密码。前端会按常见邮箱
 
 所有连接固定使用 TLS，并以只读模式选择邮箱。首次同步按配置的回看天数读取，之后使用持久
 UID 游标增量同步；单批最多 200 封，积压批次会继续推进。Worker 优先使用 IMAP IDLE，
-服务器不支持时自动按配置轮询。只缓存属于当前启用隐藏邮箱白名单的邮件。账号、主机、端口
+服务器不支持时自动按配置轮询。同一母号复用已认证的 IMAP 连接完成增量同步和 IDLE，
+通过 `NOOP` 验证连接；配置变化、认证失败、连接错误或 Worker 停止时关闭并按需重连。
+只缓存属于当前启用隐藏邮箱白名单的邮件。账号、主机、端口
 或邮箱目录发生变化时会清空上一连接目标的本地邮件缓存，避免混用 UID 和邮件内容。
 
 列表接口只返回 160 字纯文本预览。单封详情按需返回完整纯文本和经过白名单清理的 `safeHtml`；脚本、表单、附件、远程图片、样式和非 HTTP(S) 链接均被移除。前端仅在 sandbox iframe 中显示该内容。

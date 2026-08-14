@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { ChevronLeft, ChevronRight, CircleOff, Clock3, Download, LoaderCircle, MailCheck, MailOpen, MailPlus, Pencil, Play, Power, RefreshCw, Search, Trash2, X } from '../../../../frontend/src/icons'
+import { ChevronLeft, ChevronRight, CircleOff, Clock3, Download, LoaderCircle, MailCheck, MailOpen, MailPlus, Pencil, Play, Power, RefreshCw, Search, Trash2 } from '../../../../frontend/src/icons'
 import { authState } from '../../../../frontend/src/auth'
 import { mailAccountState } from '../account'
 import { errorMessage } from '../../../../frontend/src/api'
+import AppDialog from '../../../../frontend/src/components/AppDialog.vue'
+import AsyncState from '../../../../frontend/src/components/AsyncState.vue'
+import { showToast } from '../../../../frontend/src/toast'
 import { mailAPI } from '../api'
 import type { CreateScheduleStatus, MailAlias, ShareLink } from '../types'
 import StatusBadge from '../components/StatusBadge.vue'
@@ -23,17 +26,23 @@ const editing = ref<MailAlias | null>(null)
 const editLabel = ref('')
 const editNote = ref('')
 const editSaving = ref(false)
+const editError = ref('')
 const shareOpen = ref(false)
 const sharingAlias = ref<MailAlias | null>(null)
 const shareLinks = ref<ShareLink[]>([])
 const shareExpiry = ref<number | null>(86400)
 const shareLoading = ref(false)
 const shareNotice = ref('')
+const shareError = ref('')
+const clearSharesOpen = ref(false)
+const clearSharesError = ref('')
+const deleteTarget = ref<MailAlias | null>(null)
+const deleteConfirm = ref('')
+const deleteError = ref('')
 const schedule = ref<CreateScheduleStatus | null>(null)
 const scheduleLoading = ref(false)
 const scheduleSaving = ref(false)
 const scheduleError = ref('')
-const scheduleNotice = ref('')
 const batchSize = ref(5)
 const aliasIntervalSeconds = ref(3)
 const intervalSeconds = ref(180)
@@ -135,29 +144,29 @@ function handleVisibilityChange() {
 }
 
 async function saveSchedule(enabled?: boolean) {
-  scheduleSaving.value = true; scheduleError.value = ''; scheduleNotice.value = ''
-  try {
-    schedule.value = await mailAPI.updateCreateSchedule({ enabled, batchSize: batchSize.value, aliasIntervalSeconds: aliasIntervalSeconds.value, intervalSeconds: intervalSeconds.value, label: scheduleLabel.value, note: scheduleNote.value })
-    scheduleNotice.value = enabled === true ? '创建计划已开启' : enabled === false ? '创建计划已暂停' : '创建计划已保存'
+	scheduleSaving.value = true; scheduleError.value = ''
+	try {
+		schedule.value = await mailAPI.updateCreateSchedule({ enabled, batchSize: batchSize.value, aliasIntervalSeconds: aliasIntervalSeconds.value, intervalSeconds: intervalSeconds.value, label: scheduleLabel.value, note: scheduleNote.value })
+		showToast(enabled === true ? '创建计划已开启' : enabled === false ? '创建计划已暂停' : '创建计划已保存')
   } catch (reason) { scheduleError.value = errorMessage(reason) }
   finally { scheduleSaving.value = false; scheduleTaskPolling() }
 }
 
 async function runSchedule() {
-  scheduleSaving.value = true; scheduleError.value = ''; scheduleNotice.value = ''
+	scheduleSaving.value = true; scheduleError.value = ''
   try {
     await mailAPI.updateCreateSchedule({ batchSize: batchSize.value, aliasIntervalSeconds: aliasIntervalSeconds.value, intervalSeconds: intervalSeconds.value, label: scheduleLabel.value, note: scheduleNote.value })
     schedule.value = await mailAPI.runCreateSchedule()
     previousScheduleRunning = true
-    scheduleNotice.value = '已开始执行一轮创建'
+		showToast('已开始执行一轮创建', 'info')
   }
   catch (reason) { scheduleError.value = errorMessage(reason) }
   finally { scheduleSaving.value = false; scheduleTaskPolling() }
 }
 
 async function stopSchedule() {
-  scheduleSaving.value = true; scheduleError.value = ''; scheduleNotice.value = ''
-  try { schedule.value = await mailAPI.stopCreateSchedule(); scheduleNotice.value = '创建计划已暂停' }
+	scheduleSaving.value = true; scheduleError.value = ''
+	try { schedule.value = await mailAPI.stopCreateSchedule(); showToast('创建计划已暂停') }
   catch (reason) { scheduleError.value = errorMessage(reason) }
   finally { scheduleSaving.value = false; scheduleTaskPolling() }
 }
@@ -178,31 +187,52 @@ function createChannelLabel(value: string | null | undefined) {
 }
 
 async function runAction(alias: MailAlias, action: 'enable' | 'disable' | 'delete') {
-  if (action === 'delete' && !confirm(`确定删除 ${alias.hme}？`)) return
-  pendingID.value = alias.anonymousId; error.value = ''
-  try { await mailAPI.aliasAction(alias.anonymousId, action); await load() }
-  catch (reason) { error.value = errorMessage(reason) }
-  finally { pendingID.value = '' }
+	if (action === 'delete') {
+		deleteTarget.value = alias
+		deleteConfirm.value = ''
+		deleteError.value = ''
+		return
+	}
+	await performAliasAction(alias, action)
 }
 
-function openEdit(alias: MailAlias) { editing.value = alias; editLabel.value = alias.label || ''; editNote.value = alias.note || ''; editOpen.value = true }
-async function openShare(alias: MailAlias) { sharingAlias.value = alias; shareOpen.value = true; shareLoading.value = true; shareNotice.value = ''; try { shareLinks.value = (await mailAPI.shareLinks(alias.anonymousId)).links } catch (reason) { error.value = errorMessage(reason) } finally { shareLoading.value = false } }
-async function createShare() { if (!sharingAlias.value) return; shareLoading.value = true; shareNotice.value = ''; try { const created = await mailAPI.createShareLink(sharingAlias.value.anonymousId, shareExpiry.value); shareLinks.value.unshift(created); shareNotice.value = `链接已生成：${location.origin}${created.shareUrl}` } catch (reason) { error.value = errorMessage(reason) } finally { shareLoading.value = false } }
-async function revokeShare(link: ShareLink) { shareLoading.value = true; try { await mailAPI.revokeShareLink(link.id); link.active = false; link.revokedAt = Date.now() / 1000 } catch (reason) { error.value = errorMessage(reason) } finally { shareLoading.value = false } }
+async function performAliasAction(alias: MailAlias, action: 'enable' | 'disable' | 'delete') {
+	pendingID.value = alias.anonymousId; error.value = ''
+	try {
+		await mailAPI.aliasAction(alias.anonymousId, action)
+		await load()
+		if (action === 'delete') deleteTarget.value = null
+		showToast(action === 'delete' ? `已删除 ${alias.hme}` : action === 'enable' ? `已启用 ${alias.hme}` : `已停用 ${alias.hme}`)
+	} catch (reason) {
+		const message = errorMessage(reason)
+		if (action === 'delete') deleteError.value = message
+		else error.value = message
+	}
+	finally { pendingID.value = '' }
+}
+
+function openEdit(alias: MailAlias) { editing.value = alias; editLabel.value = alias.label || ''; editNote.value = alias.note || ''; editError.value = ''; editOpen.value = true }
+async function openShare(alias: MailAlias) { sharingAlias.value = alias; shareOpen.value = true; shareLoading.value = true; shareNotice.value = ''; shareError.value = ''; try { shareLinks.value = (await mailAPI.shareLinks(alias.anonymousId)).links } catch (reason) { shareError.value = errorMessage(reason) } finally { shareLoading.value = false } }
+async function createShare() { if (!sharingAlias.value) return; shareLoading.value = true; shareNotice.value = ''; shareError.value = ''; try { const created = await mailAPI.createShareLink(sharingAlias.value.anonymousId, shareExpiry.value); shareLinks.value.unshift(created); shareNotice.value = `链接已生成：${location.origin}${created.shareUrl}` } catch (reason) { shareError.value = errorMessage(reason) } finally { shareLoading.value = false } }
+async function revokeShare(link: ShareLink) { shareLoading.value = true; shareError.value = ''; try { await mailAPI.revokeShareLink(link.id); link.active = false; link.revokedAt = Date.now() / 1000; showToast('分享链接已撤销') } catch (reason) { shareError.value = errorMessage(reason) } finally { shareLoading.value = false } }
+function openClearShares() { clearSharesError.value = ''; shareOpen.value = false; clearSharesOpen.value = true }
+function closeClearShares() { if (shareLoading.value) return; clearSharesOpen.value = false; shareOpen.value = Boolean(sharingAlias.value) }
 async function clearInactiveShares() {
-  if (!sharingAlias.value || !window.confirm('永久删除当前账号已撤销或已过期的分享记录？')) return
-  shareLoading.value = true; shareNotice.value = ''
-  try {
-    const result = await mailAPI.clearInactiveShareLinks()
-    shareLinks.value = (await mailAPI.shareLinks(sharingAlias.value.anonymousId)).links
-    shareNotice.value = `已从数据库清理 ${result.deleted} 条失效分享记录`
-  } catch (reason) { error.value = errorMessage(reason) } finally { shareLoading.value = false }
+	if (!sharingAlias.value) return
+	shareLoading.value = true; shareNotice.value = ''
+	try {
+		const result = await mailAPI.clearInactiveShareLinks()
+		shareLinks.value = (await mailAPI.shareLinks(sharingAlias.value.anonymousId)).links
+		clearSharesOpen.value = false
+		shareOpen.value = true
+		showToast(`已从数据库清理 ${result.deleted} 条失效分享记录`)
+	} catch (reason) { clearSharesError.value = errorMessage(reason) } finally { shareLoading.value = false }
 }
 async function saveEdit() {
   if (!editing.value || !editLabel.value.trim()) return
   editSaving.value = true; error.value = ''
-  try { const updated = await mailAPI.updateAlias(editing.value.anonymousId, editLabel.value, editNote.value); const index = aliases.value.findIndex((item) => item.anonymousId === editing.value?.anonymousId); if (index >= 0) aliases.value[index] = { ...aliases.value[index], ...updated, label: editLabel.value, note: editNote.value }; editOpen.value = false }
-  catch (reason) { error.value = errorMessage(reason) }
+	try { const updated = await mailAPI.updateAlias(editing.value.anonymousId, editLabel.value, editNote.value); const index = aliases.value.findIndex((item) => item.anonymousId === editing.value?.anonymousId); if (index >= 0) aliases.value[index] = { ...aliases.value[index], ...updated, label: editLabel.value, note: editNote.value }; editOpen.value = false; showToast(`已更新 ${editing.value.hme}`) }
+	catch (reason) { editError.value = errorMessage(reason) }
   finally { editSaving.value = false }
 }
 
@@ -283,8 +313,9 @@ onBeforeUnmount(() => {
                 <td data-label="创建时间">{{ formatDate(alias.createTimestamp) }}</td>
                 <td class="row-actions"><LoaderCircle v-if="pendingID === alias.anonymousId" :size="18" class="spin" /><template v-else><a class="icon-button" :href="`/mail/mailbox?alias=${encodeURIComponent(alias.hme)}`" title="查看邮件" :aria-label="`查看 ${alias.hme} 的邮件`"><MailOpen :size="16" /></a><button class="icon-button" title="编辑标签和备注" @click="openEdit(alias)"><Pencil :size="16" /></button><button class="icon-button" title="生成分享链接" @click="openShare(alias)"><MailPlus :size="16" /></button><button class="icon-button" :title="alias.isActive === false ? '重新启用邮箱' : '停用邮箱'" @click="runAction(alias, alias.isActive === false ? 'enable' : 'disable')"><Power :size="16" /></button><button class="icon-button danger" title="删除邮箱" @click="runAction(alias, 'delete')"><Trash2 :size="16" /></button></template></td>
               </tr>
-              <tr v-if="!loading && visible.length === 0"><td colspan="6" class="empty-state"><MailOpen :size="28" /><strong>没有符合条件的邮箱</strong><span>调整关键词或状态筛选后重试</span></td></tr>
-              <tr v-if="loading && aliases.length === 0"><td colspan="6" class="empty-state"><LoaderCircle :size="22" class="spin" /><strong>正在读取邮箱</strong></td></tr>
+              <tr v-if="loading && aliases.length === 0"><td colspan="6" class="empty-state"><AsyncState state="loading" title="正在读取邮箱" /></td></tr>
+              <tr v-else-if="error && aliases.length === 0"><td colspan="6" class="empty-state"><AsyncState state="error" title="邮箱列表加载失败" :detail="error" @retry="load" /></td></tr>
+              <tr v-else-if="visible.length === 0"><td colspan="6" class="empty-state"><AsyncState state="empty" title="没有符合条件的邮箱" detail="调整关键词或状态筛选后重试"><template #icon><MailOpen :size="28" /></template></AsyncState></td></tr>
             </tbody>
           </table>
         </div>
@@ -296,7 +327,7 @@ onBeforeUnmount(() => {
 
       <div v-else-if="workspaceView === 'schedule'" class="task-pane">
         <div class="task-header"><div><h3>自动创建计划</h3><span v-if="schedule?.nextRunAt">下次执行 {{ formatScheduleTime(schedule.nextRunAt) }}</span></div><div class="schedule-actions"><span class="schedule-status" :class="{ active: schedule?.running || schedule?.enabled }"><i />{{ schedule?.running ? `创建中 ${schedule.currentIndex}/${schedule.currentTotal}` : schedule?.enabled ? `已开启 · ${formatRemaining(schedule.remainingSeconds)}` : '已暂停' }}</span><button class="button ghost" :disabled="scheduleSaving || schedule?.running" @click="runSchedule"><Play :size="15" />立即执行</button><button v-if="schedule?.enabled || schedule?.running" class="button ghost" :disabled="scheduleSaving" @click="stopSchedule"><Power :size="15" />暂停</button></div></div>
-        <p v-if="scheduleError" class="message error">{{ scheduleError }}</p><p v-if="scheduleNotice" class="message success">{{ scheduleNotice }}</p>
+        <p v-if="scheduleError" class="message error">{{ scheduleError }}</p>
         <div class="schedule-form">
           <label class="field"><span>每轮数量 <small>1 - 20 个</small></span><input v-model.number="batchSize" type="number" min="1" max="20" /></label>
           <label class="field"><span>邮箱间隔 <small>秒</small></span><input v-model.number="aliasIntervalSeconds" type="number" min="1" max="3600" /></label>
@@ -311,31 +342,41 @@ onBeforeUnmount(() => {
     </section>
   </section>
 
-  <Teleport to="body">
-    <div v-if="editOpen" class="dialog-backdrop" @click.self="editOpen = false">
-      <form class="dialog" @submit.prevent="saveEdit">
-        <div class="dialog-heading"><div><h2>编辑邮箱信息</h2></div><button type="button" class="icon-button" title="关闭" @click="editOpen = false"><X :size="18" /></button></div>
+  <AppDialog id="edit-alias" :open="editOpen" title="编辑邮箱信息" :subtitle="editing?.hme || ''" :busy="editSaving" @close="editOpen = false">
+      <form id="edit-alias-form" @submit.prevent="saveEdit">
         <label class="field"><span>标签</span><input v-model="editLabel" maxlength="100" required /></label>
         <label class="field"><span>备注</span><textarea v-model="editNote" rows="3" maxlength="500" /></label>
-        <div class="dialog-actions"><button type="button" class="button ghost" @click="editOpen = false">取消</button><button class="button primary" :disabled="editSaving"><LoaderCircle v-if="editSaving" :size="16" class="spin" />保存</button></div>
+        <p v-if="editError" class="message error">{{ editError }}</p>
       </form>
-    </div>
-  </Teleport>
-  <Teleport to="body">
-    <div v-if="shareOpen" class="dialog-backdrop" @click.self="shareOpen = false">
-      <div class="dialog share-dialog">
-        <div class="dialog-heading"><div><h2>分享收件地址</h2><p>{{ sharingAlias?.hme }}</p></div><div class="dialog-heading-actions"><button class="button ghost danger-action" :disabled="shareLoading || !shareLinks.some((item) => !item.active)" @click="clearInactiveShares"><Trash2 :size="15" />清理失效</button><button class="icon-button" title="关闭" @click="shareOpen = false"><X :size="18" /></button></div></div>
+      <template #actions><button type="button" class="button ghost" :disabled="editSaving" @click="editOpen = false">取消</button><button form="edit-alias-form" class="button primary" :disabled="editSaving || !editLabel.trim()"><LoaderCircle v-if="editSaving" :size="16" class="spin" />保存</button></template>
+  </AppDialog>
+
+  <AppDialog id="share-alias" :open="shareOpen" title="分享收件地址" :subtitle="sharingAlias?.hme || ''" :busy="shareLoading" @close="shareOpen = false">
+      <div class="share-dialog">
+        <div class="share-tools"><button class="button ghost danger-action" :disabled="shareLoading || !shareLinks.some((item) => !item.active)" @click="openClearShares"><Trash2 :size="15" />清理失效</button></div>
         <label class="field"><span>有效期</span><select v-model="shareExpiry"><option :value="3600">1 小时</option><option :value="86400">1 天</option><option :value="604800">7 天</option><option :value="2592000">30 天</option><option :value="null">永久</option></select></label>
-        <button class="button primary" :disabled="shareLoading" @click="createShare"><LoaderCircle v-if="shareLoading" :size="16" class="spin" />生成分享链接</button>
+        <p v-if="shareError" class="message error">{{ shareError }}</p>
         <p v-if="shareNotice" class="message success">{{ shareNotice }}</p>
         <div class="share-list"><div v-for="link in shareLinks" :key="link.id" class="share-item"><span>{{ link.active ? '有效' : '已撤销' }} · {{ link.expiresAt ? formatDate(link.expiresAt) : '永久' }}</span><button v-if="link.active" class="button ghost" @click="revokeShare(link)">撤销</button></div><p v-if="!shareLoading && shareLinks.length === 0" class="muted">暂无分享链接</p></div>
       </div>
-    </div>
-  </Teleport>
+      <template #actions><button type="button" class="button ghost" :disabled="shareLoading" @click="shareOpen = false">关闭</button><button class="button primary" :disabled="shareLoading" @click="createShare"><LoaderCircle v-if="shareLoading" :size="16" class="spin" />生成分享链接</button></template>
+  </AppDialog>
+
+  <AppDialog id="delete-alias" :open="Boolean(deleteTarget)" title="删除隐藏邮箱" subtitle="此操作不可恢复" role="alertdialog" :busy="Boolean(pendingID)" @close="deleteTarget = null">
+    <p v-if="deleteTarget">将永久删除 <strong>{{ deleteTarget.hme }}</strong>，请输入完整邮箱地址确认。</p>
+    <label v-if="deleteTarget" class="field"><span>邮箱地址</span><input v-model="deleteConfirm" autocomplete="off" /></label>
+    <p v-if="deleteError" class="message error">{{ deleteError }}</p>
+    <template #actions><button type="button" class="button ghost" :disabled="Boolean(pendingID)" @click="deleteTarget = null">取消</button><button type="button" class="button danger-action danger-confirm" :disabled="Boolean(pendingID) || deleteConfirm !== deleteTarget?.hme" @click="deleteTarget && performAliasAction(deleteTarget, 'delete')"><LoaderCircle v-if="pendingID" :size="15" class="spin" /><Trash2 v-else :size="15" />永久删除</button></template>
+  </AppDialog>
+
+  <AppDialog id="clear-shares" :open="clearSharesOpen" title="清理失效分享" subtitle="此操作不可恢复" role="alertdialog" :busy="shareLoading" @close="closeClearShares">
+    <p>将从 PostgreSQL 永久删除当前账号所有已撤销或已过期的分享记录。</p>
+    <p v-if="clearSharesError" class="message error">{{ clearSharesError }}</p>
+    <template #actions><button type="button" class="button ghost" :disabled="shareLoading" @click="closeClearShares">取消</button><button type="button" class="button danger-action danger-confirm" :disabled="shareLoading" @click="clearInactiveShares"><LoaderCircle v-if="shareLoading" :size="15" class="spin" /><Trash2 v-else :size="15" />永久清理</button></template>
+  </AppDialog>
 </template>
 
 <style scoped>
-.dialog-heading-actions { display: flex; align-items: center; gap: 8px; }
 .alias-overview { display: flex; min-height: 54px; align-items: center; gap: 0; margin-bottom: 16px; padding: 0 16px; color: var(--muted); background: var(--surface); border: 1px solid var(--border); border-radius: 7px; }
 .alias-overview > div { display: flex; min-width: 155px; align-items: center; gap: 8px; padding-right: 24px; font-size: 12px; }
 .alias-overview > div + div { padding-left: 24px; border-left: 1px solid var(--border-soft); }
@@ -373,11 +414,12 @@ onBeforeUnmount(() => {
 .task-header { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding-bottom: 20px; border-bottom: 1px solid var(--border-soft); }
 .task-header h3 { margin: 0; color: var(--text); font-size: 16px; font-weight: 700; }
 .task-header > div:first-child > span { display: block; margin-top: 5px; color: var(--muted); font-size: 11px; }
-.share-dialog { max-width: 520px; }
 .share-dialog p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+.share-tools { display: flex; justify-content: flex-end; margin-bottom: 12px; }
 .share-list { display: grid; gap: 8px; margin-top: 16px; max-height: 220px; overflow: auto; }
 .share-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px; background: var(--surface-subtle); border: 1px solid var(--border-soft); border-radius: 6px; font-size: 12px; }
 .muted { color: var(--muted); }
+.danger-confirm { color: #fff; background: var(--danger); border-color: var(--danger); }
 .schedule-actions { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
 .schedule-status { display: inline-flex; min-height: 32px; align-items: center; gap: 7px; padding: 0 10px; color: var(--muted); background: var(--surface-subtle); border: 1px solid var(--border); border-radius: 7px; font-size: 11px; white-space: nowrap; }
 .schedule-status i { width: 7px; height: 7px; background: var(--muted); border-radius: 50%; }

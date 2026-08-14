@@ -7,8 +7,26 @@ export interface MailAccount {
   appleId?: string
   dsid?: string
   enabled: boolean
+	status: 'active' | 'warning' | 'pending' | 'error'
+	statusMessage: string
+	aliasCount: number
+	hasProxy: boolean
+	icloudWeb: { configured: boolean; healthy: boolean; lastCheckedAt?: number; expiresAt?: number; message?: string }
+	appleAccount: { configured: boolean; healthy: boolean; lastCheckedAt?: number; expiresAt?: number; message?: string }
+	mailbox: { configured: boolean; enabled: boolean; lastSyncAt?: number; lastError?: string }
+	autoRefreshEnabled: boolean
+	autoCreateEnabled: boolean
+	autoCreateRunning: boolean
+	aliasQueueStatus: string
   createdAt: string
   updatedAt: string
+}
+
+export interface MailAccountProxyTest {
+	reachable: boolean
+	statusCode: number
+	latencyMs: number
+	target: string
 }
 
 const stored = localStorage.getItem('running-mail-account-id') || 'default'
@@ -31,6 +49,32 @@ export async function createMailAccount(name: string) {
   mailAccountState.accounts.push(account)
   selectMailAccount(account.id)
   return account
+}
+
+export async function deleteMailAccount(id: string) {
+  await apiRequest<{ deleted: boolean; id: string }>(`/api/mail/v1/accounts/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  mailAccountState.accounts = mailAccountState.accounts.filter((item) => item.id !== id)
+  if (mailAccountState.currentId === id) {
+    const nextID = mailAccountState.accounts.find((item) => item.id === 'default')?.id || mailAccountState.accounts[0]?.id || 'default'
+    mailAccountState.currentId = nextID
+    localStorage.setItem('running-mail-account-id', nextID)
+    window.dispatchEvent(new CustomEvent('mail-account-change', { detail: nextID }))
+  }
+}
+
+export async function updateMailAccountProxy(id: string, proxy: string) {
+	const account = await apiRequest<MailAccount>(`/api/mail/v1/accounts/${encodeURIComponent(id)}/proxy`, {
+		method: 'PUT', body: JSON.stringify({ proxy }),
+	})
+	const index = mailAccountState.accounts.findIndex((item) => item.id === id)
+	if (index >= 0) mailAccountState.accounts[index] = account
+	return account
+}
+
+export function testMailAccountProxy(id: string, proxy: string) {
+	return apiRequest<MailAccountProxyTest>(`/api/mail/v1/accounts/${encodeURIComponent(id)}/proxy/test`, {
+		method: 'POST', body: JSON.stringify({ proxy }),
+	})
 }
 
 export function selectMailAccount(id: string) {

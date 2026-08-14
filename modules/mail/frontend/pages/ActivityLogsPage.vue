@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { ChevronLeft, ChevronRight, CircleAlert, Clock3, Copy, LoaderCircle, RefreshCw, ScrollText, Search, Trash2, X } from '../../../../frontend/src/icons'
+import { ChevronLeft, ChevronRight, CircleAlert, Clock3, Copy, LoaderCircle, RefreshCw, ScrollText, Search, Trash2 } from '../../../../frontend/src/icons'
 import { errorMessage } from '../../../../frontend/src/api'
+import AppDialog from '../../../../frontend/src/components/AppDialog.vue'
+import AsyncState from '../../../../frontend/src/components/AsyncState.vue'
+import { showToast } from '../../../../frontend/src/toast'
 import { mailAPI } from '../api'
 import type { ActivityLogEntry, ActivityLogPage } from '../types'
 
@@ -17,6 +20,9 @@ const endDate = ref('')
 const page = ref(1)
 const pageSize = ref(10)
 const selected = ref<ActivityLogEntry | null>(null)
+const clearOpen = ref(false)
+const clearing = ref(false)
+const clearError = ref('')
 const copied = ref('')
 let searchTimer: ReturnType<typeof window.setTimeout> | undefined
 let requestGeneration = 0
@@ -26,7 +32,7 @@ const rangeStart = computed(() => data.value.total === 0 ? 0 : (page.value - 1) 
 const rangeEnd = computed(() => Math.min(page.value * pageSize.value, data.value.total))
 const hasFilters = computed(() => Boolean(search.value || level.value || category.value || source.value || startDate.value || endDate.value))
 
-const categoryLabels: Record<string, string> = { alias: '邮箱管理', session: 'Session', mailbox: '收件箱', automation: '自动任务' }
+const categoryLabels: Record<string, string> = { account: '账号管理', alias: '邮箱管理', session: 'Session', mailbox: '收件箱', automation: '自动任务' }
 const sourceLabels: Record<string, string> = { user: '用户操作', background: '后台任务', system: '系统' }
 
 function dateBoundary(value: string, end = false) {
@@ -65,18 +71,20 @@ function resetFilters() {
 }
 
 async function clearLogs() {
-  if (!data.value.total || !window.confirm(`确认清理邮件系统的 ${data.value.total} 条使用日志？此操作会从 PostgreSQL 永久删除记录。`)) return
-  loading.value = true
-  error.value = ''
-  try {
-    await mailAPI.clearActivityLogs()
-    page.value = 1
-    await load()
-  } catch (reason) {
-    error.value = errorMessage(reason)
-  } finally {
-    loading.value = false
-  }
+	if (!data.value.total || clearing.value) return
+	clearing.value = true
+	clearError.value = ''
+	try {
+		await mailAPI.clearActivityLogs()
+		page.value = 1
+		await load()
+		clearOpen.value = false
+		showToast('邮件系统使用日志已永久清理')
+	} catch (reason) {
+		clearError.value = errorMessage(reason)
+	} finally {
+		clearing.value = false
+	}
 }
 
 function formatTime(value: string) {
@@ -105,7 +113,7 @@ onBeforeUnmount(() => window.removeEventListener('mail-account-change', handleAc
   <section class="page activity-logs">
     <div class="page-heading">
       <div><h2>使用日志</h2><p>查看邮件系统的用户操作与后台任务结果</p></div>
-      <div class="page-actions"><button class="button ghost danger-action" :disabled="loading || !data.total" @click="clearLogs"><Trash2 :size="16" />清理</button><button class="button ghost" :disabled="loading" @click="load"><LoaderCircle v-if="loading" :size="16" class="spin" /><RefreshCw v-else :size="16" />刷新</button></div>
+      <div class="page-actions"><button class="button ghost danger-action" :disabled="loading || clearing || !data.total" @click="clearError = ''; clearOpen = true"><Trash2 :size="16" />清理</button><button class="button ghost" :disabled="loading" @click="load"><LoaderCircle v-if="loading" :size="16" class="spin" /><RefreshCw v-else :size="16" />刷新</button></div>
     </div>
 
     <div class="log-overview" aria-label="日志概览">
@@ -118,7 +126,7 @@ onBeforeUnmount(() => window.removeEventListener('mail-account-change', handleAc
       <div class="log-toolbar">
         <label class="search-field"><Search :size="16" /><input v-model="search" placeholder="搜索摘要、动作或请求 ID" @input="scheduleSearch" /></label>
         <label><span>级别</span><select v-model="level" @change="applyFilters"><option value="">全部</option><option value="info">正常</option><option value="warning">警告</option><option value="error">错误</option></select></label>
-        <label><span>分类</span><select v-model="category" @change="applyFilters"><option value="">全部</option><option value="alias">邮箱管理</option><option value="session">Session</option><option value="mailbox">收件箱</option><option value="automation">自动任务</option></select></label>
+        <label><span>分类</span><select v-model="category" @change="applyFilters"><option value="">全部</option><option value="account">账号管理</option><option value="alias">邮箱管理</option><option value="session">Session</option><option value="mailbox">收件箱</option><option value="automation">自动任务</option></select></label>
         <label><span>来源</span><select v-model="source" @change="applyFilters"><option value="">全部</option><option value="user">用户操作</option><option value="background">后台任务</option><option value="system">系统</option></select></label>
         <label class="date-filter"><span>开始日期</span><input v-model="startDate" type="date" @change="applyFilters" /></label>
         <label class="date-filter"><span>结束日期</span><input v-model="endDate" type="date" @change="applyFilters" /></label>
@@ -140,8 +148,9 @@ onBeforeUnmount(() => window.removeEventListener('mail-account-change', handleAc
               <td data-label="请求 ID"><button v-if="entry.requestId" class="request-id" :title="copied === entry.requestId ? '已复制' : '复制请求 ID'" @click="copyRequestID(entry.requestId)"><code>{{ entry.requestId.slice(0, 10) }}</code><Copy :size="13" /></button><span v-else>—</span></td>
               <td class="row-actions"><button class="button ghost detail-button" @click="selected = entry">详情</button></td>
             </tr>
-            <tr v-if="!loading && data.items.length === 0"><td colspan="7" class="empty-state"><ScrollText :size="28" /><strong>{{ hasFilters ? '没有符合条件的日志' : '暂无使用日志' }}</strong><span>{{ hasFilters ? '调整筛选条件后重试' : '邮件系统执行操作后会在这里留下记录' }}</span></td></tr>
-            <tr v-if="loading && data.items.length === 0"><td colspan="7" class="empty-state"><LoaderCircle :size="22" class="spin" /><strong>正在读取使用日志</strong></td></tr>
+            <tr v-if="loading && data.items.length === 0"><td colspan="7" class="empty-state"><AsyncState state="loading" title="正在读取使用日志" /></td></tr>
+            <tr v-else-if="error && data.items.length === 0"><td colspan="7" class="empty-state"><AsyncState state="error" title="使用日志加载失败" :detail="error" @retry="load" /></td></tr>
+            <tr v-else-if="data.items.length === 0"><td colspan="7" class="empty-state"><AsyncState state="empty" :title="hasFilters ? '没有符合条件的日志' : '暂无使用日志'" :detail="hasFilters ? '调整筛选条件后重试' : '邮件系统执行操作后会在这里留下记录'"><template #icon><ScrollText :size="28" /></template></AsyncState></td></tr>
           </tbody>
         </table>
       </div>
@@ -149,10 +158,8 @@ onBeforeUnmount(() => window.removeEventListener('mail-account-change', handleAc
     </section>
   </section>
 
-  <Teleport to="body">
-    <div v-if="selected" class="dialog-backdrop" @click.self="selected = null">
-      <div class="dialog log-detail">
-        <div class="dialog-heading"><div><h2>日志详情</h2><p>{{ formatTime(selected.createdAt) }}</p></div><button class="icon-button" title="关闭" @click="selected = null"><X :size="18" /></button></div>
+  <AppDialog id="log-detail" :open="Boolean(selected)" title="日志详情" :subtitle="selected ? formatTime(selected.createdAt) : ''" width="wide" @close="selected = null">
+      <div v-if="selected" class="log-detail">
         <dl>
           <div><dt>结果</dt><dd><span class="log-status" :class="selected.level"><i />{{ selected.outcome === 'success' ? '成功' : selected.level === 'warning' ? '警告' : '失败' }}</span></dd></div>
           <div><dt>摘要</dt><dd>{{ selected.summary }}</dd></div>
@@ -167,8 +174,14 @@ onBeforeUnmount(() => window.removeEventListener('mail-account-change', handleAc
           <div v-if="selected.metadata && Object.keys(selected.metadata).length"><dt>附加信息</dt><dd><pre>{{ JSON.stringify(selected.metadata, null, 2) }}</pre></dd></div>
         </dl>
       </div>
-    </div>
-  </Teleport>
+      <template #actions><button type="button" class="button ghost" @click="selected = null">关闭</button></template>
+  </AppDialog>
+
+  <AppDialog id="clear-logs" :open="clearOpen" title="清理使用日志" subtitle="此操作不可恢复" role="alertdialog" :busy="clearing" @close="clearOpen = false">
+    <p>将从 PostgreSQL 永久删除当前账号的 <strong>{{ data.total }}</strong> 条邮件系统使用日志。</p>
+    <p v-if="clearError" class="message error">{{ clearError }}</p>
+    <template #actions><button type="button" class="button ghost" :disabled="clearing" @click="clearOpen = false">取消</button><button type="button" class="button danger-action danger-confirm" :disabled="clearing" @click="clearLogs"><LoaderCircle v-if="clearing" :size="15" class="spin" /><Trash2 v-else :size="15" />永久清理</button></template>
+  </AppDialog>
 </template>
 
 <style scoped>
@@ -191,6 +204,7 @@ onBeforeUnmount(() => window.removeEventListener('mail-account-change', handleAc
 .page-size { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 11px; }
 .page-size select { min-height: 31px; padding: 0 27px 0 9px; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 6px; }
 .log-table th:nth-child(1) { width: 175px; }
+.log-table { contain: paint; }
 .log-table th:nth-child(3) { width: 92px; }
 .log-table th:nth-child(4) { width: 180px; }
 .log-table th:nth-child(5) { width: 82px; }
@@ -209,8 +223,6 @@ onBeforeUnmount(() => window.removeEventListener('mail-account-change', handleAc
 .pagination-bar { display: flex; min-height: 54px; align-items: center; justify-content: space-between; padding: 0 16px; color: var(--muted); border-top: 1px solid var(--border); font-size: 11px; }
 .pagination-bar > div { display: flex; align-items: center; gap: 9px; }
 .pagination-bar strong { min-width: 82px; color: var(--text); font-size: 11px; text-align: center; }
-.log-detail { width: min(720px, calc(100vw - 32px)); }
-.log-detail .dialog-heading p { margin: 4px 0 0; color: var(--muted); font-size: 11px; }
 .log-detail dl { display: grid; margin: 0; border-top: 1px solid var(--border-soft); }
 .log-detail dl > div { display: grid; grid-template-columns: 130px minmax(0, 1fr); min-height: 44px; border-bottom: 1px solid var(--border-soft); }
 .log-detail dt, .log-detail dd { margin: 0; padding: 11px 12px; }
@@ -218,6 +230,7 @@ onBeforeUnmount(() => window.removeEventListener('mail-account-change', handleAc
 .log-detail dd { min-width: 0; color: var(--text); font-size: 12px; overflow-wrap: anywhere; }
 .log-detail pre { max-height: 180px; margin: 0; overflow: auto; white-space: pre-wrap; }
 .detail-text { white-space: pre-wrap; }
+.danger-confirm { color: #fff; background: var(--danger); border-color: var(--danger); }
 @media (max-width: 1200px) { .log-toolbar { grid-template-columns: minmax(260px, 1.5fr) repeat(3, minmax(120px, 1fr)); } .date-filter, .reset-button { grid-row: 2; } }
 @media (max-width: 760px) {
   .log-overview { padding: 0 8px; }

@@ -75,6 +75,7 @@ type mailboxConfig struct {
 type MailboxService struct {
 	mu            sync.Mutex
 	syncMu        sync.Mutex
+	imapMu        sync.Mutex
 	path          string
 	settingsPath  string
 	session       *SessionManager
@@ -92,11 +93,16 @@ type MailboxService struct {
 	lastLoadErr   error
 	logs          *activitylog.Store
 	lastLogState  string
+	imapClient    *imapclient.Client
+	imapTarget    string
+	imapUpdates   chan struct{}
+	dialIMAP      func(string, *imapclient.Options) (*imapclient.Client, error)
 }
 
 func (s *MailboxService) SetActivityLog(logs *activitylog.Store) { s.logs = logs }
 
 func (s *MailboxService) Clear(ctx context.Context) error {
+	s.RequestSync()
 	s.syncMu.Lock()
 	defer s.syncMu.Unlock()
 	s.mu.Lock()
@@ -118,6 +124,7 @@ func NewMailboxService(stateDir string, session *SessionManager) *MailboxService
 		wake:          make(chan struct{}, 1),
 		revisionEvent: make(chan struct{}),
 		accountID:     defaultMailAccountID,
+		dialIMAP:      imapclient.DialTLS,
 	}
 	service.repository = &jsonMailboxRepository{path: service.path}
 	return service
@@ -149,10 +156,23 @@ func (s *MailboxService) Start() {
 	stop, done := s.stop, s.done
 	s.mu.Unlock()
 	go func() {
-		defer close(done)
+		defer func() {
+			s.closeIMAPConnection()
+			s.setWorkerState(false, "stopped")
+			s.mu.Lock()
+			if s.stop == stop {
+				s.stop, s.done = nil, nil
+			}
+			s.mu.Unlock()
+			close(done)
+		}()
 		for {
+			if mailboxStopRequested(stop) {
+				return
+			}
 			cfg := s.config()
 			if !cfg.Enabled {
+				s.closeIMAPConnection()
 				s.setWorkerState(false, "disabled")
 				select {
 				case <-time.After(30 * time.Second):
@@ -164,16 +184,18 @@ func (s *MailboxService) Start() {
 			}
 			s.setWorkerState(true, "sync")
 			_ = s.SyncFromSession()
+			if mailboxStopRequested(stop) {
+				return
+			}
 			cfg = s.config()
 			s.setWorkerState(true, "idle")
-			idleSupported, changed := waitForIMAPChange(cfg, time.Duration(cfg.PollSeconds)*time.Second, stop, s.wake)
+			idleSupported, changed := s.waitForIMAPChange(cfg, time.Duration(cfg.PollSeconds)*time.Second, stop)
 			if !idleSupported {
 				s.setWorkerState(true, "poll")
 				select {
 				case <-time.After(time.Duration(cfg.PollSeconds) * time.Second):
 				case <-s.wake:
 				case <-stop:
-					s.setWorkerState(false, "stopped")
 					return
 				}
 				continue
@@ -184,7 +206,6 @@ func (s *MailboxService) Start() {
 			select {
 			case <-s.wake:
 			case <-stop:
-				s.setWorkerState(false, "stopped")
 				return
 			default:
 			}
@@ -197,14 +218,28 @@ func (s *MailboxService) Stop() {
 		s.mu.Unlock()
 		return
 	}
-	close(s.stop)
-	done := s.done
-	s.stop = nil
-	s.done = nil
+	stop, done := s.stop, s.done
+	select {
+	case <-stop:
+	default:
+		close(stop)
+	}
 	s.mu.Unlock()
+	// Closing the active socket interrupts SELECT, FETCH and IDLE immediately.
+	// The worker owns final cleanup and keeps Start blocked until it has exited.
+	s.closeIMAPConnection()
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
+	}
+}
+
+func mailboxStopRequested(stop <-chan struct{}) bool {
+	select {
+	case <-stop:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -596,7 +631,15 @@ func (s *MailboxService) RunSync(aliases []string) (MailboxStatus, error) {
 	}
 	s.mu.Unlock()
 
-	messages, uidValidity, highestUID, err := fetchIMAP(cfg, aliases, previousUIDValidity, afterUID)
+	client, err := s.ensureIMAPConnectionLocked(cfg)
+	var messages []MailMessage
+	var uidValidity, highestUID uint32
+	if err == nil {
+		messages, uidValidity, highestUID, err = fetchIMAPWithClient(client, cfg, aliases, previousUIDValidity, afterUID)
+	}
+	if err != nil {
+		s.closeIMAPConnectionLocked()
+	}
 	now := unixNow()
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -645,16 +688,7 @@ func (s *MailboxService) statusWithConfig(status MailboxStatus, cfg mailboxConfi
 	return status
 }
 
-func fetchIMAP(cfg mailboxConfig, aliases []string, previousUIDValidity, afterUID uint32) ([]MailMessage, uint32, uint32, error) {
-	client, err := imapclient.DialTLS(net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)), &imapclient.Options{Dialer: &net.Dialer{Timeout: 20 * time.Second}})
-	if err != nil {
-		return nil, 0, afterUID, fmt.Errorf("IMAP TLS 连接失败: %w", err)
-	}
-	defer client.Close()
-	if err := client.Login(cfg.Username, cfg.Password).Wait(); err != nil {
-		return nil, 0, afterUID, imapLoginError(cfg, err)
-	}
-	defer logoutIMAP(client)
+func fetchIMAPWithClient(client *imapclient.Client, cfg mailboxConfig, aliases []string, previousUIDValidity, afterUID uint32) ([]MailMessage, uint32, uint32, error) {
 	selected, err := client.Select(cfg.Mailbox, &imap.SelectOptions{ReadOnly: true}).Wait()
 	if err != nil {
 		return nil, 0, afterUID, fmt.Errorf("IMAP 邮箱选择失败: %w", err)
@@ -775,36 +809,23 @@ func cloneMailMessages(messages []MailMessage) []MailMessage {
 	return cloned
 }
 
-func waitForIMAPChange(cfg mailboxConfig, timeout time.Duration, stop <-chan struct{}, wake <-chan struct{}) (bool, bool) {
+func (s *MailboxService) waitForIMAPChange(cfg mailboxConfig, timeout time.Duration, stop <-chan struct{}) (bool, bool) {
 	if cfg.Username == "" || cfg.Password == "" {
 		return false, false
 	}
-	updates := make(chan struct{}, 1)
-	options := &imapclient.Options{
-		Dialer: &net.Dialer{Timeout: 20 * time.Second},
-		UnilateralDataHandler: &imapclient.UnilateralDataHandler{
-			Mailbox: func(data *imapclient.UnilateralDataMailbox) {
-				if data.NumMessages != nil {
-					select {
-					case updates <- struct{}{}:
-					default:
-					}
-				}
-			},
-		},
-	}
-	client, err := imapclient.DialTLS(net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)), options)
+	s.syncMu.Lock()
+	defer s.syncMu.Unlock()
+	client, err := s.ensureIMAPConnectionLocked(cfg)
 	if err != nil {
 		return false, false
 	}
-	defer client.Close()
-	if err := client.Login(cfg.Username, cfg.Password).Wait(); err != nil {
-		return false, false
-	}
-	defer logoutIMAP(client)
 	if _, err := client.Select(cfg.Mailbox, &imap.SelectOptions{ReadOnly: true}).Wait(); err != nil {
+		s.closeIMAPConnectionLocked()
 		return false, false
 	}
+	s.imapMu.Lock()
+	updates := s.imapUpdates
+	s.imapMu.Unlock()
 	for {
 		select {
 		case <-updates:
@@ -824,18 +845,80 @@ drained:
 	select {
 	case <-updates:
 		changed = true
-	case <-wake:
+	case <-s.wake:
 		changed = true
 	case <-stop:
 	case <-timer.C:
 	}
 	if err := idle.Close(); err != nil {
+		s.closeIMAPConnectionLocked()
 		return false, changed
 	}
 	if err := idle.Wait(); err != nil {
+		s.closeIMAPConnectionLocked()
 		return false, changed
 	}
 	return true, changed
+}
+
+func (s *MailboxService) ensureIMAPConnectionLocked(cfg mailboxConfig) (*imapclient.Client, error) {
+	target := imapConnectionTarget(cfg)
+	s.imapMu.Lock()
+	current, currentTarget := s.imapClient, s.imapTarget
+	s.imapMu.Unlock()
+	if current != nil && currentTarget == target {
+		if err := current.Noop().Wait(); err == nil {
+			return current, nil
+		}
+		s.closeIMAPConnectionLocked()
+	} else if current != nil {
+		s.closeIMAPConnectionLocked()
+	}
+	updates := make(chan struct{}, 1)
+	options := &imapclient.Options{
+		Dialer: &net.Dialer{Timeout: 20 * time.Second},
+		UnilateralDataHandler: &imapclient.UnilateralDataHandler{
+			Mailbox: func(data *imapclient.UnilateralDataMailbox) {
+				if data.NumMessages != nil {
+					select {
+					case updates <- struct{}{}:
+					default:
+					}
+				}
+			},
+		},
+	}
+	client, err := s.dialIMAP(net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)), options)
+	if err != nil {
+		return nil, fmt.Errorf("IMAP TLS 连接失败: %w", err)
+	}
+	if err := client.Login(cfg.Username, cfg.Password).Wait(); err != nil {
+		_ = client.Close()
+		return nil, imapLoginError(cfg, err)
+	}
+	s.imapMu.Lock()
+	s.imapClient, s.imapTarget, s.imapUpdates = client, target, updates
+	s.imapMu.Unlock()
+	return client, nil
+}
+
+func (s *MailboxService) closeIMAPConnection() {
+	s.closeIMAPConnectionLocked()
+}
+
+func (s *MailboxService) closeIMAPConnectionLocked() {
+	s.imapMu.Lock()
+	client := s.imapClient
+	s.imapClient, s.imapTarget, s.imapUpdates = nil, "", nil
+	s.imapMu.Unlock()
+	if client != nil {
+		_ = client.Close()
+	}
+}
+
+func imapConnectionTarget(cfg mailboxConfig) string {
+	sum := sha256.Sum256([]byte(strings.ToLower(cfg.Host) + "\x00" + strconv.Itoa(cfg.Port) + "\x00" + cfg.Username + "\x00" + cfg.Password + "\x00" + cfg.Mailbox))
+	return fmt.Sprintf("%x", sum[:])
 }
 
 func mailboxGeneration(cfg mailboxConfig, uidValidity uint32) string {

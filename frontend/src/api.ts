@@ -12,7 +12,7 @@ export class APIError extends Error {
 export async function apiRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers)
   headers.set('X-API-Key', authState.apiKey)
-  if (path.startsWith('/api/mail/') && !path.endsWith('/accounts')) {
+  if (path.startsWith('/api/mail/')) {
     headers.set('X-Mail-Account-ID', localStorage.getItem(mailAccountStorageKey) || 'default')
   }
   if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')

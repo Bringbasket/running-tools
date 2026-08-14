@@ -1,0 +1,2 @@
+ALTER TABLE mail_accounts
+ADD COLUMN IF NOT EXISTS proxy_url TEXT NOT NULL DEFAULT '';

@@ -19,6 +19,7 @@ export {
   MailOpen,
   Mailbox,
   MailPlus,
+  Network,
   Plus,
   KeyRound,
   Pencil,

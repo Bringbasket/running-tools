@@ -5,13 +5,14 @@ describe('mail module manifest', () => {
   it('keeps all mail tools under one navigation group', () => {
     expect(mailModule.id).toBe('mail')
     expect(mailModule.navigation.map((item) => item.to)).toEqual([
+      '/mail/accounts',
       '/mail/aliases',
       '/mail/mailbox',
       '/mail/api-builder',
       '/mail/session',
       '/mail/logs',
     ])
-    expect(mailModule.routes).toHaveLength(5)
+    expect(mailModule.routes).toHaveLength(6)
   })
 })
 

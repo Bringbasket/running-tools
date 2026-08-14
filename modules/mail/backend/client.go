@@ -9,13 +9,22 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
 type Client struct {
-	config     ICloudConfig
-	httpClient *http.Client
-	baseURL    string
+	mu          sync.Mutex
+	config      ICloudConfig
+	httpClient  *http.Client
+	baseURL     string
+	cookieDirty bool
+}
+
+func (client *Client) ConfigUpdate() (ICloudConfig, bool) {
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	return client.config, client.cookieDirty
 }
 
 type ClientOption func(*Client)
@@ -181,15 +190,18 @@ func (client *Client) Check(ctx context.Context) (map[string]any, error) {
 }
 
 func (client *Client) request(ctx context.Context, method, endpoint string, payload any) (map[string]any, error) {
+	client.mu.Lock()
+	config := client.config
+	client.mu.Unlock()
 	requestURL, err := url.Parse(client.baseURL + endpoint)
 	if err != nil {
 		return nil, err
 	}
 	query := requestURL.Query()
-	query.Set("clientBuildNumber", client.config.ClientBuildNumber)
-	query.Set("clientMasteringNumber", client.config.ClientMasteringNumber)
-	query.Set("clientId", client.config.ClientID)
-	query.Set("dsid", client.config.DSID)
+	query.Set("clientBuildNumber", config.ClientBuildNumber)
+	query.Set("clientMasteringNumber", config.ClientMasteringNumber)
+	query.Set("clientId", config.ClientID)
+	query.Set("dsid", config.DSID)
 	requestURL.RawQuery = query.Encode()
 
 	var body io.Reader
@@ -207,16 +219,17 @@ func (client *Client) request(ctx context.Context, method, endpoint string, payl
 	request.Header.Set("Accept", "*/*")
 	request.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7")
 	request.Header.Set("Content-Type", "text/plain")
-	request.Header.Set("Origin", client.config.Origin)
-	request.Header.Set("Referer", client.config.Referer)
-	request.Header.Set("User-Agent", client.config.UserAgent)
-	request.Header.Set("Cookie", client.config.Cookie)
+	request.Header.Set("Origin", config.Origin)
+	request.Header.Set("Referer", config.Referer)
+	request.Header.Set("User-Agent", config.UserAgent)
+	request.Header.Set("Cookie", config.Cookie)
 
 	response, err := client.httpClient.Do(request)
 	if err != nil {
 		return nil, fmt.Errorf("network error: %w", err)
 	}
 	defer response.Body.Close()
+	client.mergeResponseCookies(response.Cookies())
 	data, err := io.ReadAll(io.LimitReader(response.Body, 4<<20))
 	if err != nil {
 		return nil, err
@@ -243,4 +256,48 @@ func (client *Client) request(ctx context.Context, method, endpoint string, payl
 		return nil, &AppleError{Payload: decoded}
 	}
 	return decoded, nil
+}
+
+func (client *Client) mergeResponseCookies(updates []*http.Cookie) {
+	if len(updates) == 0 {
+		return
+	}
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	request := &http.Request{Header: http.Header{"Cookie": []string{client.config.Cookie}}}
+	existing := request.Cookies()
+	values := make(map[string]string, len(existing)+len(updates))
+	order := make([]string, 0, len(existing)+len(updates))
+	for _, cookie := range existing {
+		if _, seen := values[cookie.Name]; !seen {
+			order = append(order, cookie.Name)
+		}
+		values[cookie.Name] = cookie.Value
+	}
+	for _, cookie := range updates {
+		if cookie.Name == "" {
+			continue
+		}
+		if cookie.MaxAge < 0 || (!cookie.Expires.IsZero() && cookie.Expires.Before(time.Now())) {
+			delete(values, cookie.Name)
+			continue
+		}
+		if _, seen := values[cookie.Name]; !seen {
+			order = append(order, cookie.Name)
+		}
+		values[cookie.Name] = cookie.Value
+	}
+	parts := make([]string, 0, len(values))
+	for _, name := range order {
+		value, ok := values[name]
+		if !ok {
+			continue
+		}
+		parts = append(parts, (&http.Cookie{Name: name, Value: value}).String())
+	}
+	merged := strings.Join(parts, "; ")
+	if merged != client.config.Cookie {
+		client.config.Cookie = merged
+		client.cookieDirty = true
+	}
 }

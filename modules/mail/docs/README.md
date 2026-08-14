@@ -31,6 +31,7 @@ SRP 协议登录：Apple ID、密码和两步验证码会经当前服务进程�
 - 可暂停、继续、取消并可重启恢复的持久化批量队列；
 - 可撤销、可设置有效期的只读分享链接；
 - TLS 只读 IMAP 收件箱、邮件缓存和验证码识别。
+- 多母号健康摘要与每账号独立 HTTP/HTTPS/SOCKS5 代理；
 - 邮件系统独立使用日志、筛选、分页和详情追踪。
 
 ## 使用日志
@@ -42,8 +43,8 @@ SRP 协议登录：Apple ID、密码和两步验证码会经当前服务进程�
 
 ## 导入 Session
 
-Session 页面默认使用 Apple 协议登录。`iCloud Web` 是完整主会话，负责邮箱列表、同步、
-启停、删除和创建；`Apple Account` 是短时管理态，只作为创建通道。两者不是可互换的
+Session 页面默认使用 Apple 协议登录。`Apple Account` 是优先使用的短时管理态，负责邮箱列表、
+创建、编辑、启停和删除；`iCloud Web` 是长 Session 兼容通道和安全回退。两者不是可互换的
 “新旧版本”，也不会合并保存。详细设计见 [`APPLE_LOGIN.md`](APPLE_LOGIN.md)。
 
 手动 cURL/HAR 导入仅作为兼容入口保留。导入接口接受以下 JSON：
@@ -65,7 +66,8 @@ Session 页面默认使用 Apple 协议登录。`iCloud Web` 是完整主会话�
 - `X-APPLE-WEBAUTH-TOKEN`
 
 Cookie 在生产模式保存在 PostgreSQL `running_state` 中；旧 `hme-config.json` 仅作为首次导入
-来源。Session 状态接口不会返回 Cookie。
+来源。iCloud Web 每次响应的 `Set-Cookie` 会自动合并续存，即使业务响应失败也不会丢失滚动
+Cookie。Session 状态接口不会返回 Cookie。
 
 ## 自动刷新
 
@@ -91,7 +93,7 @@ Session。重新导入不会把 Cookie 写入日志或返回给前端。
 
 | 表 | 内容 |
 | --- | --- |
-| `mail_accounts` | 邮件账号及显示身份 |
+| `mail_accounts` | 邮件账号、显示身份及独立代理配置 |
 | `running_state` | 每账号 Session、登录态、配置和任务当前状态 |
 | `mailbox_messages` | IMAP 邮件正文、安全 HTML 和验证码索引 |
 | `mailbox_hidden_messages` | 每账号的本地隐藏记录 |
@@ -102,6 +104,13 @@ Session。重新导入不会把 Cookie 写入日志或返回给前端。
 
 所有邮件 API 通过 `X-Mail-Account-ID` 选择账号。网页切换账号只改变当前视图，其他账号的
 自动刷新、自动创建和 IMAP Worker 会继续运行。敏感字段不会通过 API 回显或写入日志。
+母号新增与切换统一位于邮件系统的“账号管理”页面；每个母号创建独立运行空间后，再进入
+“Session 管理”配置 Apple Account 或 iCloud Web 登录态。平台顶栏不提供重复的账号操作入口。
+非默认母号可以在账号管理中永久删除；删除会先停止该账号的全部 Worker，再在一个事务中清理
+Session、任务状态、邮件缓存、分享链接和使用日志。默认账号 `default` 用于兼容旧数据，禁止删除。
+账号管理页同时展示 Web、Apple Account、IMAP 和后台任务健康摘要。每个账号可以配置独立代理，
+代理覆盖 Apple 登录及两个邮件管理通道；API 只返回是否配置，不回显地址和凭据。IMAP Worker
+复用账号级认证连接执行同步和 IDLE，并在配置变化、故障或停止时关闭连接。
 
 ## 标准接口与兼容接口
 

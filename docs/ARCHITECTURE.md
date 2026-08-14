@@ -45,7 +45,13 @@ Gin 用于 HTTP 网关和中间件，Ent 用于 PostgreSQL 模型管理，Redis 
 
 邮件模块按 `mail_accounts.id` 建立运行空间。每个账号实例化独立 Session 管理器、自动刷新
 Worker、自动创建 Worker、批量队列、IMAP 服务和日志仓库；请求通过 `X-Mail-Account-ID`
-选择账号。切换前端当前账号不会停止其他账号的后台任务。
+选择账号。切换前端当前账号不会停止其他账号的后台任务。账号列表实时汇总各运行时的 Web、
+Apple Account、IMAP 和后台任务状态，不复制持久化健康状态。
+
+每个账号可以在 `mail_accounts.proxy_url` 保存独立代理。代理客户端归账号 Session 管理器所有，
+同时覆盖 Apple SRP 登录、Apple Account 管理态和 iCloud Web 请求；对外只暴露 `hasProxy`。
+iCloud Web 客户端会滚动合并响应 Cookie，并在账号内串行写回 `running_state`，避免并发响应覆盖。
+IMAP 服务在账号内复用一条已认证连接执行同步和 IDLE，目标或凭据变化后主动销毁旧连接。
 
 ## 前端模块约定
 
@@ -61,8 +67,8 @@ Worker、自动创建 Worker、批量队列、IMAP 服务和日志仓库；请�
 Vue 单文件组件的模板和 TypeScript 逻辑放在对应模块目录内。模块专属 API
 客户端、类型、组件、样式和测试也应保留在该模块中。
 
-当前导航注册表为每个模块渲染一个一级折叠菜单。邮件系统下包含邮箱管理、收件箱、API
-调试、Session 管理和邮件系统使用日志。未来的 Codex APP 或 CAP 转换功能必须建立新的同级模块，
+当前导航注册表为每个模块渲染一个一级折叠菜单。邮件系统下包含账号管理、邮箱管理、收件箱、API
+调试、Session 管理和邮件系统使用日志。账号切换与新增只在账号管理页完成，不占用平台顶栏。未来的 Codex APP 或 CAP 转换功能必须建立新的同级模块，
 不能作为不相关页面添加到邮件系统中。
 
 工具箱作为 `modules/tools` 独立模块注册，内部可以包含多个小型工具页面。纯本地计算
@@ -97,6 +103,8 @@ data/system
 
 `data/system` 的文件是 Go 容器与宿主机更新服务的受限通信协议，不是业务数据库。
 Session Cookie 不会由 API 返回，也不会写入日志。
+`mail_accounts.proxy_url` 与 `running_state` 中的认证材料均按敏感配置处理，不得写入 API、日志
+或错误详情。
 
 ## 系统更新边界
 
