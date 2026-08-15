@@ -26,7 +26,7 @@ Gin 用于 HTTP 网关和中间件，Ent 用于 PostgreSQL 模型管理，Redis 
   -> Vue 平台外壳
        -> 已注册模块的路由和导航
   -> Go HTTP 服务
-       -> 平台中间件（请求 ID、鉴权、异常恢复、安全响应头）
+       -> 平台中间件（请求 ID、会话鉴权、来源校验、异常恢复、安全响应头）
        -> 平台服务（健康检查、版本更新、嵌入式前端）
        -> 邮件模块 API
             -> Session 管理器
@@ -100,6 +100,7 @@ Recent 聚合查询最多返回 500 封。PostgreSQL 列表查询必须在 SQL �
 ```text
 PostgreSQL
 |-- mail_accounts
+|-- auth_users / auth_sessions / auth_api_tokens / auth_login_events
 |-- running_state
 |-- mailbox_messages / mailbox_hidden_messages / mailbox_sync_states
 |-- mail_share_links / mail_share_sessions
@@ -112,7 +113,11 @@ data/system
 ```
 
 `data/system` 的文件是 Go 容器与宿主机更新服务的受限通信协议，不是业务数据库。
-Session Cookie 不会由 API 返回，也不会写入日志。
+平台登录密码使用 Argon2id 哈希；浏览器 Session 和 API 访问令牌只在 PostgreSQL 保存 SHA-256
+摘要。浏览器 Session 通过 `HttpOnly`、`SameSite=Strict` Cookie 传递，HTTPS 下同时启用
+`Secure`，不会由 JSON API 返回，也不会写入日志。除登录状态和登录接口外，`/api/*`、`/v1/*`
+统一由平台中间件默认拒绝未认证请求，业务模块不能自行漏配公开路由。数据库没有用户时固定
+初始化 `admin / admin123`，该账号在完成强制改密前不能访问业务 API；密码不从环境变量读取。
 `mail_accounts.proxy_url` 与 `running_state` 中的认证材料均按敏感配置处理，不得写入 API、日志
 或错误详情。
 

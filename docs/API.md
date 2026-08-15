@@ -1,10 +1,14 @@
 # HTTP API
 
-除 `/health` 和前端静态资源外，所有接口都需要请求头：
+浏览器通过登录接口取得 `HttpOnly` Session Cookie；脚本调用使用在“API 调试”页面创建的
+可撤销访问令牌：
 
 ```http
-X-API-Key: <RUNNING_API_KEY>
+Authorization: Bearer <API_ACCESS_TOKEN>
 ```
+
+除 `/health`、`GET /api/auth/status`、`POST /api/auth/login`、取件接口和前端静态资源外，
+`/api/*` 与 `/v1/*` 默认都要求认证。浏览器 Cookie 不应复制到脚本中。
 
 JSON 接口统一使用以下响应结构：
 
@@ -28,12 +32,37 @@ JSON 接口统一使用以下响应结构：
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET | `/health` | 健康检查，不需要 API Key |
+| GET | `/health` | 健康检查，不需要登录 |
+| GET | `/api/auth/status` | 检查当前浏览器登录状态 |
+| POST | `/api/auth/login` | 使用账号密码创建浏览器会话 |
+| GET | `/api/auth/me` | 读取当前登录用户 |
+| PUT | `/api/auth/password` | 修改密码并撤销当前会话之外的浏览器会话 |
+| POST | `/api/auth/logout` | 撤销当前浏览器会话 |
+| GET/POST | `/api/auth/tokens` | 查询或创建脚本访问令牌 |
+| DELETE | `/api/auth/tokens/{id}` | 撤销脚本访问令牌 |
 | GET | `/api/system/version` | 读取当前版本、目标版本和更新状态 |
 | POST | `/api/system/version/check` | 仅检查是否存在新构建，不重启服务 |
 | POST | `/api/system/update` | 提交宿主机更新请求 |
 
 兼容地址：`/v1/system/version`、`/v1/system/version/check`、`/v1/system/update`。
+
+### 平台登录
+
+登录请求为 `{"username":"admin","password":"..."}`。成功后服务端设置名为
+`running_session` 的 `HttpOnly`、`SameSite=Strict` Cookie；HTTPS 下自动增加 `Secure`。
+会话默认有效 168 小时，可通过 `RUNNING_AUTH_SESSION_HOURS` 调整。密码修改请求为：
+
+```json
+{"currentPassword":"旧密码","newPassword":"至少 10 个字符的新密码"}
+```
+
+修改密码会撤销其他浏览器会话和现有 API 访问令牌。登录按账号和来源地址限制为 15 分钟内最多
+5 次失败，Redis 不可用时回退为当前进程内限流；登录成功会清除对应失败计数。
+数据库没有用户时固定初始化 `admin / admin123`，该初始账号只能调用改密和退出接口。
+
+创建脚本令牌请求为 `{"name":"自动化脚本","expiresInDays":90}`，有效期范围为 1-365 天。
+令牌原文只在创建响应返回一次，列表只返回名称、前缀和使用时间。脚本使用
+`Authorization: Bearer rtk_...`，撤销后立即失效。
 
 必须先调用 `POST /api/system/version/check`。检查任务只拉取镜像元数据并比较构建
 标识，不会重启服务；只有确认存在新构建后，网页才会显示“立即更新”。
@@ -150,9 +179,9 @@ GET /api/mail/v1/activity-logs?page=1&pageSize=10&search=&level=&category=&sourc
 日志查询本身、状态轮询和长轮询不会写入日志。字段与脱敏要求见 [`LOGGING.md`](LOGGING.md)。
 
 `POST /api/mail/v1/activity-logs/clear` 会永久删除邮件系统日志表中当前账号的记录，
-不会只隐藏前端数据。该操作需要 API Key 鉴权且前端必须二次确认。
+不会只隐藏前端数据。该操作需要登录鉴权且前端必须二次确认。
 
-失败或警告日志的 `detail` 保存经过脱敏和截断的业务错误响应，不记录 Cookie、密码、API Key、
+失败或警告日志的 `detail` 保存经过脱敏和截断的业务错误响应，不记录 Cookie、密码、访问令牌、
 邮件正文或验证码。`mail/messages/clear`、`activity-logs/clear` 和 `share-links/clear-inactive`
 均直接执行 PostgreSQL `DELETE`，不是前端过滤。
 
@@ -344,7 +373,10 @@ IMAP、IDLE 和“测试连接”都复用该母号在账号管理中保存的�
 | HTTP 状态 | 错误代码 | 说明 |
 | --- | --- | --- |
 | 400 | `BAD_REQUEST` | JSON、参数、cURL 或 HAR 内容无效 |
-| 401 | `UNAUTHORIZED` | API Key 缺失或错误 |
+| 401 | `UNAUTHORIZED` | 登录会话或访问令牌缺失、失效或已撤销 |
+| 401 | `INVALID_CREDENTIALS` | 账号或密码错误 |
+| 403 | `PASSWORD_CHANGE_REQUIRED` | 首次登录后尚未修改初始密码 |
+| 429 | `LOGIN_RATE_LIMITED` | 登录失败次数超过限制 |
 | 409 | `SESSION_MISSING` | 尚未导入 iCloud Session |
 | 409 | `SESSION_EXPIRED` | Apple 已拒绝当前 Session |
 | 409 | `UPDATE_IN_PROGRESS` | 已有更新任务正在执行 |

@@ -56,6 +56,108 @@ var (
 			},
 		},
 	}
+	// AuthAPITokensColumns holds the columns for the "auth_api_tokens" table.
+	AuthAPITokensColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeString, Size: 64},
+		{Name: "user_id", Type: field.TypeInt64},
+		{Name: "name", Type: field.TypeString, Size: 100},
+		{Name: "token_hash", Type: field.TypeString, Unique: true, Size: 64},
+		{Name: "token_prefix", Type: field.TypeString, Size: 20},
+		{Name: "created_at", Type: field.TypeTime},
+		{Name: "last_used_at", Type: field.TypeTime, Nullable: true},
+		{Name: "expires_at", Type: field.TypeTime, Nullable: true},
+		{Name: "revoked_at", Type: field.TypeTime, Nullable: true},
+	}
+	// AuthAPITokensTable holds the schema information for the "auth_api_tokens" table.
+	AuthAPITokensTable = &schema.Table{
+		Name:       "auth_api_tokens",
+		Columns:    AuthAPITokensColumns,
+		PrimaryKey: []*schema.Column{AuthAPITokensColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "authapitoken_user_id_created_at",
+				Unique:  false,
+				Columns: []*schema.Column{AuthAPITokensColumns[1], AuthAPITokensColumns[5]},
+			},
+		},
+	}
+	// AuthLoginEventsColumns holds the columns for the "auth_login_events" table.
+	AuthLoginEventsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt64, Increment: true},
+		{Name: "user_id", Type: field.TypeInt64, Nullable: true},
+		{Name: "username", Type: field.TypeString, Size: 64},
+		{Name: "outcome", Type: field.TypeString, Size: 16},
+		{Name: "reason", Type: field.TypeString, Size: 64, Default: ""},
+		{Name: "ip_address", Type: field.TypeString, Size: 128, Default: ""},
+		{Name: "user_agent", Type: field.TypeString, Size: 500, Default: ""},
+		{Name: "created_at", Type: field.TypeTime},
+	}
+	// AuthLoginEventsTable holds the schema information for the "auth_login_events" table.
+	AuthLoginEventsTable = &schema.Table{
+		Name:       "auth_login_events",
+		Columns:    AuthLoginEventsColumns,
+		PrimaryKey: []*schema.Column{AuthLoginEventsColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "authloginevent_created_at",
+				Unique:  false,
+				Columns: []*schema.Column{AuthLoginEventsColumns[7]},
+			},
+			{
+				Name:    "authloginevent_username_created_at",
+				Unique:  false,
+				Columns: []*schema.Column{AuthLoginEventsColumns[2], AuthLoginEventsColumns[7]},
+			},
+		},
+	}
+	// AuthSessionsColumns holds the columns for the "auth_sessions" table.
+	AuthSessionsColumns = []*schema.Column{
+		{Name: "token_hash", Type: field.TypeString, Size: 64},
+		{Name: "user_id", Type: field.TypeInt64},
+		{Name: "ip_address", Type: field.TypeString, Size: 128, Default: ""},
+		{Name: "user_agent", Type: field.TypeString, Size: 500, Default: ""},
+		{Name: "created_at", Type: field.TypeTime},
+		{Name: "last_seen_at", Type: field.TypeTime},
+		{Name: "expires_at", Type: field.TypeTime},
+		{Name: "revoked_at", Type: field.TypeTime, Nullable: true},
+	}
+	// AuthSessionsTable holds the schema information for the "auth_sessions" table.
+	AuthSessionsTable = &schema.Table{
+		Name:       "auth_sessions",
+		Columns:    AuthSessionsColumns,
+		PrimaryKey: []*schema.Column{AuthSessionsColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "authsession_user_id_expires_at",
+				Unique:  false,
+				Columns: []*schema.Column{AuthSessionsColumns[1], AuthSessionsColumns[6]},
+			},
+		},
+	}
+	// AuthUsersColumns holds the columns for the "auth_users" table.
+	AuthUsersColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt64, Increment: true},
+		{Name: "username", Type: field.TypeString, Unique: true, Size: 64},
+		{Name: "password_hash", Type: field.TypeString},
+		{Name: "must_change_password", Type: field.TypeBool, Default: false},
+		{Name: "disabled", Type: field.TypeBool, Default: false},
+		{Name: "created_at", Type: field.TypeTime},
+		{Name: "updated_at", Type: field.TypeTime},
+		{Name: "last_login_at", Type: field.TypeTime, Nullable: true},
+	}
+	// AuthUsersTable holds the schema information for the "auth_users" table.
+	AuthUsersTable = &schema.Table{
+		Name:       "auth_users",
+		Columns:    AuthUsersColumns,
+		PrimaryKey: []*schema.Column{AuthUsersColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "authuser_username",
+				Unique:  true,
+				Columns: []*schema.Column{AuthUsersColumns[1]},
+			},
+		},
+	}
 	// MailboxHiddenMessagesColumns holds the columns for the "mailbox_hidden_messages" table.
 	MailboxHiddenMessagesColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt, Increment: true},
@@ -140,6 +242,10 @@ var (
 	// Tables holds all the tables in the schema.
 	Tables = []*schema.Table{
 		ActivityLogsTable,
+		AuthAPITokensTable,
+		AuthLoginEventsTable,
+		AuthSessionsTable,
+		AuthUsersTable,
 		MailboxHiddenMessagesTable,
 		MailboxMessagesTable,
 		MailboxSyncStatesTable,

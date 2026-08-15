@@ -13,6 +13,10 @@ import (
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/activitylog"
+	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/authapitoken"
+	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/authloginevent"
+	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/authsession"
+	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/authuser"
 	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/mailboxhiddenmessage"
 	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/mailboxmessage"
 	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/mailboxsyncstate"
@@ -77,6 +81,10 @@ func checkColumn(t, c string) error {
 	initCheck.Do(func() {
 		columnCheck = sql.NewColumnCheck(map[string]func(string) bool{
 			activitylog.Table:          activitylog.ValidColumn,
+			authapitoken.Table:         authapitoken.ValidColumn,
+			authloginevent.Table:       authloginevent.ValidColumn,
+			authsession.Table:          authsession.ValidColumn,
+			authuser.Table:             authuser.ValidColumn,
 			mailboxhiddenmessage.Table: mailboxhiddenmessage.ValidColumn,
 			mailboxmessage.Table:       mailboxmessage.ValidColumn,
 			mailboxsyncstate.Table:     mailboxsyncstate.ValidColumn,

@@ -71,7 +71,7 @@ go build -tags embed -o running-tools ./cmd/server
 
 ```powershell
 cd D:\All\GPT\running-tools
-$env:RUNNING_API_KEY="local-secret"
+$env:RUNNING_ADMIN_USERNAME="admin"
 $env:RUNNING_ADDR="127.0.0.1:8000"
 $env:RUNNING_DATA_DIR="$PWD\data"
 go run ./cmd/server
@@ -85,6 +85,9 @@ npm run dev
 ```
 
 浏览器打开 <http://127.0.0.1:5173>。
+
+数据库第一次启动会创建 `admin / admin123` 并要求修改初始密码。后续启动读取 PostgreSQL
+中的用户和 Argon2id 密码哈希，不通过环境变量配置登录密码。
 
 ## 前端模块注册
 

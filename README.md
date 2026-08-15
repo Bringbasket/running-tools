@@ -61,6 +61,7 @@ running-tools/
 - Session 持久化、状态检查和服务端自动刷新；
 - 邮箱创建计划由前端配置、Go 后台 Worker 持久执行；
 - 从 GHCR 镜像更新、健康检查、失败回滚和自动重启；GHCR 包可单独设置为公开或私有；
+- PostgreSQL 账号密码登录、可撤销浏览器会话、登录限流和独立 API 访问令牌；
 - 生产统一使用 PostgreSQL，旧 JSON 仅用于兼容导入；通过 PostgreSQL 模式运行时，逻辑状态
   使用 `running_state` JSONB 保存，不依赖业务 JSON 文件；
 - 桌面端可收起侧栏、移动端抽屉菜单和深浅色主题。
@@ -85,11 +86,12 @@ Compose 会创建本项目独立的应用、PostgreSQL 和 Redis 容器及数据
 
 ```bash
 cp .env.example .env
-# 编辑 .env，至少修改 RUNNING_API_KEY、RUNNING_POSTGRES_PASSWORD、RUNNING_REDIS_PASSWORD
+# 编辑 .env，至少修改 RUNNING_POSTGRES_PASSWORD、RUNNING_REDIS_PASSWORD
 docker compose --env-file .env -f compose.server.yml up -d
 ```
 
-打开 <http://127.0.0.1:8091>，输入 `RUNNING_API_KEY`。查看服务状态：
+打开 <http://127.0.0.1:8091>，使用初始账号 `admin`、密码 `admin123` 登录。首次登录必须
+设置新密码；修改后密码哈希保存在 PostgreSQL。查看服务状态：
 
 ```bash
 docker compose --env-file .env -f compose.server.yml ps
@@ -104,7 +106,7 @@ docker compose --env-file .env -f compose.server.yml logs --tail=100 app
 
 ```bash
 cp .env.example .env
-# 将 RUNNING_DATABASE_URL 改为本地 PostgreSQL 连接串，并设置随机 RUNNING_API_KEY
+# 将 RUNNING_DATABASE_URL 改为本地 PostgreSQL 连接串
 cd frontend
 npm ci
 npm run build
@@ -112,7 +114,7 @@ cd ..
 go run ./cmd/server
 ```
 
-打开 <http://127.0.0.1:8000>，输入 `RUNNING_API_KEY`。
+打开 <http://127.0.0.1:8000>，使用 `admin` 和初始密码登录。
 
 Windows PowerShell 示例：
 
@@ -122,7 +124,7 @@ npm ci
 npm run build
 
 cd ..
-$env:RUNNING_API_KEY="请换成自己的密钥"
+$env:RUNNING_ADMIN_USERNAME="admin"
 $env:RUNNING_ADDR="127.0.0.1:8000"
 $env:RUNNING_DATA_DIR="$PWD\data"
 go run ./cmd/server
@@ -169,9 +171,9 @@ GHCR 镜像的可见性独立于 GitHub 仓库可见性：公开包可以直接�
   遵守适用的服务条款和当地法律。
 - 只使用自己拥有或明确获授权的 Apple Account、Session 和邮箱数据。项目不用于绕过
   验证、获取未授权账号或批量滥用服务。
-- Session Cookie、Apple 密码、两步验证码、IMAP App 专用密码、代理凭据和
-  `RUNNING_API_KEY` 都是敏感信息，禁止提交到 Git、Issue、日志或截图中。
-- 生产环境应使用 HTTPS、强随机 API Key、受限的反向代理访问和独立数据库账号。
+- Session Cookie、登录密码、API 访问令牌、Apple 密码、两步验证码、IMAP App 专用密码和
+  代理凭据都是敏感信息，禁止提交到 Git、Issue、日志或截图中。
+- 生产环境应使用 HTTPS、受限的反向代理访问和独立数据库账号。
 
 公开仓库不等于公开运行数据。`.env`、`data/`、Session、Cookie 和构建产物已通过
 `.gitignore` 排除；提交前仍应使用 `git status` 和代码审查确认没有敏感内容。

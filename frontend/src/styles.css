@@ -117,6 +117,20 @@
     background: var(--app-bg);
   }
 
+  .auth-loading {
+    display: flex;
+    min-height: 100vh;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    color: var(--text);
+    background: var(--app-bg);
+  }
+
+  .auth-loading strong {
+    font-size: 14px;
+  }
+
   .workspace {
     min-height: 100vh;
     margin-left: 256px;

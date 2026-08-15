@@ -52,7 +52,8 @@ mkdir -p \
   /www/wwwroot/running-tools/data/system
 ```
 
-2. 将 `.env.example` 复制为 `.env`，生成新的 `RUNNING_API_KEY`。
+2. 将 `.env.example` 复制为 `.env`。数据库没有用户时会初始化 `admin / admin123`，首次登录
+   必须立即修改密码。
 
 3. 将 `compose.server.yml` 放入应用目录。
 
@@ -76,6 +77,13 @@ docker compose --env-file .env -f compose.server.yml pull
 docker compose --env-file .env -f compose.server.yml up -d
 curl http://127.0.0.1:8091/health
 ```
+
+反向代理必须使用 HTTPS，并转发原始 `Host` 和 `X-Forwarded-Proto`。Compose 默认仅监听
+`127.0.0.1`，因此可以设置 `RUNNING_TRUST_PROXY=true` 读取代理传入的客户端地址；不要在应用
+端口直接暴露公网时启用该选项。
+
+从旧 Key 版本升级后，`RUNNING_API_KEY` 不再参与登录或 HTTP 鉴权，可以直接从 `.env` 删除。
+尚未完成首次改密的管理员会统一恢复为初始密码 `admin123`；已经修改过的数据库密码不会被覆盖。
 
 只有完成新旧接口对比后，才能将反向代理指向 `http://127.0.0.1:8091`。8091
 端口用于避开当前运行在 8090 的 Python 服务。

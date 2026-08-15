@@ -28,9 +28,9 @@ export default defineConfig({
       allow: [workspaceRoot],
     },
     proxy: {
-      '/api': proxyTarget,
-      '/v1': proxyTarget,
-      '/health': proxyTarget,
+      '/api': { target: proxyTarget, changeOrigin: false },
+      '/v1': { target: proxyTarget, changeOrigin: false },
+      '/health': { target: proxyTarget, changeOrigin: false },
     },
   },
   test: {

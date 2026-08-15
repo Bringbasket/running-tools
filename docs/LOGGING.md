@@ -56,7 +56,7 @@
 以下内容禁止写入任何使用日志、控制台日志或接口响应：
 
 - iCloud Cookie、Session Token、信任令牌、动态 API Key；
-- Apple ID 密码、两步验证码、IMAP 密码和 Running Tools API Key；
+- Running Tools 登录密码和访问令牌、Apple ID 密码、两步验证码及 IMAP 密码；
 - 邮件正文、安全 HTML、验证码内容和完整请求/响应体；
 - `Authorization`、`Cookie`、`Set-Cookie` 等认证请求头。
 

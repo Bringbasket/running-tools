@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ChevronLeft, ChevronRight, CircleOff, Clock3, Copy, Download, LoaderCircle, MailCheck, MailOpen, MailPlus, Pencil, Play, Power, RefreshCw, Search, Trash2 } from '../../../../frontend/src/icons'
-import { authState } from '../../../../frontend/src/auth'
 import { mailAccountState } from '../account'
 import { errorMessage } from '../../../../frontend/src/api'
 import AppDialog from '../../../../frontend/src/components/AppDialog.vue'
@@ -303,7 +302,7 @@ async function saveEdit() {
 async function exportCSV() {
   error.value = ''
   try {
-    const response = await fetch('/api/mail/v1/aliases/export.csv', { headers: { 'X-API-Key': authState.apiKey, 'X-Mail-Account-ID': mailAccountState.currentId } })
+    const response = await fetch('/api/mail/v1/aliases/export.csv', { credentials: 'same-origin', headers: { 'X-Mail-Account-ID': mailAccountState.currentId } })
     if (!response.ok) throw new Error(`导出失败：HTTP ${response.status}`)
     const url = URL.createObjectURL(await response.blob())
     const anchor = document.createElement('a'); anchor.href = url; anchor.download = 'hide-my-email.csv'; anchor.click(); URL.revokeObjectURL(url)

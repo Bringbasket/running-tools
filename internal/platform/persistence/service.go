@@ -50,9 +50,11 @@ func Open(ctx context.Context, cfg Config) (*Service, error) {
 	return service, nil
 }
 
-func (s *Service) Mode() StorageMode { return s.config.Mode }
-func (s *Service) Ent() *ent.Client  { return s.ent }
-func (s *Service) DB() *sql.DB       { return s.db }
+func (s *Service) Mode() StorageMode    { return s.config.Mode }
+func (s *Service) Ent() *ent.Client     { return s.ent }
+func (s *Service) DB() *sql.DB          { return s.db }
+func (s *Service) Redis() *redis.Client { return s.redis }
+func (s *Service) RedisPrefix() string  { return s.config.RedisPrefix }
 
 func (s *Service) Close() error {
 	if s.redis != nil {

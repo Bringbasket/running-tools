@@ -14,6 +14,14 @@ type Tx struct {
 	config
 	// ActivityLog is the client for interacting with the ActivityLog builders.
 	ActivityLog *ActivityLogClient
+	// AuthAPIToken is the client for interacting with the AuthAPIToken builders.
+	AuthAPIToken *AuthAPITokenClient
+	// AuthLoginEvent is the client for interacting with the AuthLoginEvent builders.
+	AuthLoginEvent *AuthLoginEventClient
+	// AuthSession is the client for interacting with the AuthSession builders.
+	AuthSession *AuthSessionClient
+	// AuthUser is the client for interacting with the AuthUser builders.
+	AuthUser *AuthUserClient
 	// MailboxHiddenMessage is the client for interacting with the MailboxHiddenMessage builders.
 	MailboxHiddenMessage *MailboxHiddenMessageClient
 	// MailboxMessage is the client for interacting with the MailboxMessage builders.
@@ -152,6 +160,10 @@ func (tx *Tx) Client() *Client {
 
 func (tx *Tx) init() {
 	tx.ActivityLog = NewActivityLogClient(tx.config)
+	tx.AuthAPIToken = NewAuthAPITokenClient(tx.config)
+	tx.AuthLoginEvent = NewAuthLoginEventClient(tx.config)
+	tx.AuthSession = NewAuthSessionClient(tx.config)
+	tx.AuthUser = NewAuthUserClient(tx.config)
 	tx.MailboxHiddenMessage = NewMailboxHiddenMessageClient(tx.config)
 	tx.MailboxMessage = NewMailboxMessageClient(tx.config)
 	tx.MailboxSyncState = NewMailboxSyncStateClient(tx.config)

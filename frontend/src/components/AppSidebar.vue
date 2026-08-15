@@ -134,7 +134,6 @@ function handleWindowClick() {
 
 onMounted(() => {
   window.addEventListener('click', handleWindowClick)
-  if (localStorage.getItem('running-api-key')) void loadVersion()
 })
 
 onBeforeUnmount(() => {

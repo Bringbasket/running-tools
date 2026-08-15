@@ -9,6 +9,18 @@ import (
 // ActivityLog is the predicate function for activitylog builders.
 type ActivityLog func(*sql.Selector)
 
+// AuthAPIToken is the predicate function for authapitoken builders.
+type AuthAPIToken func(*sql.Selector)
+
+// AuthLoginEvent is the predicate function for authloginevent builders.
+type AuthLoginEvent func(*sql.Selector)
+
+// AuthSession is the predicate function for authsession builders.
+type AuthSession func(*sql.Selector)
+
+// AuthUser is the predicate function for authuser builders.
+type AuthUser func(*sql.Selector)
+
 // MailboxHiddenMessage is the predicate function for mailboxhiddenmessage builders.
 type MailboxHiddenMessage func(*sql.Selector)
 

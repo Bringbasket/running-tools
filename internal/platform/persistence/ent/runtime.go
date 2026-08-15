@@ -6,6 +6,10 @@ import (
 	"time"
 
 	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/activitylog"
+	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/authapitoken"
+	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/authloginevent"
+	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/authsession"
+	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/authuser"
 	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/mailboxhiddenmessage"
 	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/mailboxmessage"
 	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/mailboxsyncstate"
@@ -190,6 +194,138 @@ func init() {
 	activitylogDescCreatedAt := activitylogFields[15].Descriptor()
 	// activitylog.DefaultCreatedAt holds the default value on creation for the created_at field.
 	activitylog.DefaultCreatedAt = activitylogDescCreatedAt.Default.(func() time.Time)
+	authapitokenFields := schema.AuthAPIToken{}.Fields()
+	_ = authapitokenFields
+	// authapitokenDescName is the schema descriptor for name field.
+	authapitokenDescName := authapitokenFields[2].Descriptor()
+	// authapitoken.NameValidator is a validator for the "name" field. It is called by the builders before save.
+	authapitoken.NameValidator = func() func(string) error {
+		validators := authapitokenDescName.Validators
+		fns := [...]func(string) error{
+			validators[0].(func(string) error),
+			validators[1].(func(string) error),
+		}
+		return func(name string) error {
+			for _, fn := range fns {
+				if err := fn(name); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}()
+	// authapitokenDescTokenHash is the schema descriptor for token_hash field.
+	authapitokenDescTokenHash := authapitokenFields[3].Descriptor()
+	// authapitoken.TokenHashValidator is a validator for the "token_hash" field. It is called by the builders before save.
+	authapitoken.TokenHashValidator = authapitokenDescTokenHash.Validators[0].(func(string) error)
+	// authapitokenDescTokenPrefix is the schema descriptor for token_prefix field.
+	authapitokenDescTokenPrefix := authapitokenFields[4].Descriptor()
+	// authapitoken.TokenPrefixValidator is a validator for the "token_prefix" field. It is called by the builders before save.
+	authapitoken.TokenPrefixValidator = authapitokenDescTokenPrefix.Validators[0].(func(string) error)
+	// authapitokenDescCreatedAt is the schema descriptor for created_at field.
+	authapitokenDescCreatedAt := authapitokenFields[5].Descriptor()
+	// authapitoken.DefaultCreatedAt holds the default value on creation for the created_at field.
+	authapitoken.DefaultCreatedAt = authapitokenDescCreatedAt.Default.(func() time.Time)
+	// authapitokenDescID is the schema descriptor for id field.
+	authapitokenDescID := authapitokenFields[0].Descriptor()
+	// authapitoken.IDValidator is a validator for the "id" field. It is called by the builders before save.
+	authapitoken.IDValidator = authapitokenDescID.Validators[0].(func(string) error)
+	authlogineventFields := schema.AuthLoginEvent{}.Fields()
+	_ = authlogineventFields
+	// authlogineventDescUsername is the schema descriptor for username field.
+	authlogineventDescUsername := authlogineventFields[2].Descriptor()
+	// authloginevent.UsernameValidator is a validator for the "username" field. It is called by the builders before save.
+	authloginevent.UsernameValidator = authlogineventDescUsername.Validators[0].(func(string) error)
+	// authlogineventDescOutcome is the schema descriptor for outcome field.
+	authlogineventDescOutcome := authlogineventFields[3].Descriptor()
+	// authloginevent.OutcomeValidator is a validator for the "outcome" field. It is called by the builders before save.
+	authloginevent.OutcomeValidator = authlogineventDescOutcome.Validators[0].(func(string) error)
+	// authlogineventDescReason is the schema descriptor for reason field.
+	authlogineventDescReason := authlogineventFields[4].Descriptor()
+	// authloginevent.DefaultReason holds the default value on creation for the reason field.
+	authloginevent.DefaultReason = authlogineventDescReason.Default.(string)
+	// authloginevent.ReasonValidator is a validator for the "reason" field. It is called by the builders before save.
+	authloginevent.ReasonValidator = authlogineventDescReason.Validators[0].(func(string) error)
+	// authlogineventDescIPAddress is the schema descriptor for ip_address field.
+	authlogineventDescIPAddress := authlogineventFields[5].Descriptor()
+	// authloginevent.DefaultIPAddress holds the default value on creation for the ip_address field.
+	authloginevent.DefaultIPAddress = authlogineventDescIPAddress.Default.(string)
+	// authloginevent.IPAddressValidator is a validator for the "ip_address" field. It is called by the builders before save.
+	authloginevent.IPAddressValidator = authlogineventDescIPAddress.Validators[0].(func(string) error)
+	// authlogineventDescUserAgent is the schema descriptor for user_agent field.
+	authlogineventDescUserAgent := authlogineventFields[6].Descriptor()
+	// authloginevent.DefaultUserAgent holds the default value on creation for the user_agent field.
+	authloginevent.DefaultUserAgent = authlogineventDescUserAgent.Default.(string)
+	// authloginevent.UserAgentValidator is a validator for the "user_agent" field. It is called by the builders before save.
+	authloginevent.UserAgentValidator = authlogineventDescUserAgent.Validators[0].(func(string) error)
+	// authlogineventDescCreatedAt is the schema descriptor for created_at field.
+	authlogineventDescCreatedAt := authlogineventFields[7].Descriptor()
+	// authloginevent.DefaultCreatedAt holds the default value on creation for the created_at field.
+	authloginevent.DefaultCreatedAt = authlogineventDescCreatedAt.Default.(func() time.Time)
+	authsessionFields := schema.AuthSession{}.Fields()
+	_ = authsessionFields
+	// authsessionDescIPAddress is the schema descriptor for ip_address field.
+	authsessionDescIPAddress := authsessionFields[2].Descriptor()
+	// authsession.DefaultIPAddress holds the default value on creation for the ip_address field.
+	authsession.DefaultIPAddress = authsessionDescIPAddress.Default.(string)
+	// authsession.IPAddressValidator is a validator for the "ip_address" field. It is called by the builders before save.
+	authsession.IPAddressValidator = authsessionDescIPAddress.Validators[0].(func(string) error)
+	// authsessionDescUserAgent is the schema descriptor for user_agent field.
+	authsessionDescUserAgent := authsessionFields[3].Descriptor()
+	// authsession.DefaultUserAgent holds the default value on creation for the user_agent field.
+	authsession.DefaultUserAgent = authsessionDescUserAgent.Default.(string)
+	// authsession.UserAgentValidator is a validator for the "user_agent" field. It is called by the builders before save.
+	authsession.UserAgentValidator = authsessionDescUserAgent.Validators[0].(func(string) error)
+	// authsessionDescCreatedAt is the schema descriptor for created_at field.
+	authsessionDescCreatedAt := authsessionFields[4].Descriptor()
+	// authsession.DefaultCreatedAt holds the default value on creation for the created_at field.
+	authsession.DefaultCreatedAt = authsessionDescCreatedAt.Default.(func() time.Time)
+	// authsessionDescLastSeenAt is the schema descriptor for last_seen_at field.
+	authsessionDescLastSeenAt := authsessionFields[5].Descriptor()
+	// authsession.DefaultLastSeenAt holds the default value on creation for the last_seen_at field.
+	authsession.DefaultLastSeenAt = authsessionDescLastSeenAt.Default.(func() time.Time)
+	// authsessionDescID is the schema descriptor for id field.
+	authsessionDescID := authsessionFields[0].Descriptor()
+	// authsession.IDValidator is a validator for the "id" field. It is called by the builders before save.
+	authsession.IDValidator = authsessionDescID.Validators[0].(func(string) error)
+	authuserFields := schema.AuthUser{}.Fields()
+	_ = authuserFields
+	// authuserDescUsername is the schema descriptor for username field.
+	authuserDescUsername := authuserFields[1].Descriptor()
+	// authuser.UsernameValidator is a validator for the "username" field. It is called by the builders before save.
+	authuser.UsernameValidator = func() func(string) error {
+		validators := authuserDescUsername.Validators
+		fns := [...]func(string) error{
+			validators[0].(func(string) error),
+			validators[1].(func(string) error),
+		}
+		return func(username string) error {
+			for _, fn := range fns {
+				if err := fn(username); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}()
+	// authuserDescMustChangePassword is the schema descriptor for must_change_password field.
+	authuserDescMustChangePassword := authuserFields[3].Descriptor()
+	// authuser.DefaultMustChangePassword holds the default value on creation for the must_change_password field.
+	authuser.DefaultMustChangePassword = authuserDescMustChangePassword.Default.(bool)
+	// authuserDescDisabled is the schema descriptor for disabled field.
+	authuserDescDisabled := authuserFields[4].Descriptor()
+	// authuser.DefaultDisabled holds the default value on creation for the disabled field.
+	authuser.DefaultDisabled = authuserDescDisabled.Default.(bool)
+	// authuserDescCreatedAt is the schema descriptor for created_at field.
+	authuserDescCreatedAt := authuserFields[5].Descriptor()
+	// authuser.DefaultCreatedAt holds the default value on creation for the created_at field.
+	authuser.DefaultCreatedAt = authuserDescCreatedAt.Default.(func() time.Time)
+	// authuserDescUpdatedAt is the schema descriptor for updated_at field.
+	authuserDescUpdatedAt := authuserFields[6].Descriptor()
+	// authuser.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	authuser.DefaultUpdatedAt = authuserDescUpdatedAt.Default.(func() time.Time)
+	// authuser.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	authuser.UpdateDefaultUpdatedAt = authuserDescUpdatedAt.UpdateDefault.(func() time.Time)
 	mailboxhiddenmessageFields := schema.MailboxHiddenMessage{}.Fields()
 	_ = mailboxhiddenmessageFields
 	// mailboxhiddenmessageDescAccountID is the schema descriptor for account_id field.

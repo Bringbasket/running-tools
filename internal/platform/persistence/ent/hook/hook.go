@@ -21,6 +21,54 @@ func (f ActivityLogFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value,
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.ActivityLogMutation", m)
 }
 
+// The AuthAPITokenFunc type is an adapter to allow the use of ordinary
+// function as AuthAPIToken mutator.
+type AuthAPITokenFunc func(context.Context, *ent.AuthAPITokenMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f AuthAPITokenFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.AuthAPITokenMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.AuthAPITokenMutation", m)
+}
+
+// The AuthLoginEventFunc type is an adapter to allow the use of ordinary
+// function as AuthLoginEvent mutator.
+type AuthLoginEventFunc func(context.Context, *ent.AuthLoginEventMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f AuthLoginEventFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.AuthLoginEventMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.AuthLoginEventMutation", m)
+}
+
+// The AuthSessionFunc type is an adapter to allow the use of ordinary
+// function as AuthSession mutator.
+type AuthSessionFunc func(context.Context, *ent.AuthSessionMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f AuthSessionFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.AuthSessionMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.AuthSessionMutation", m)
+}
+
+// The AuthUserFunc type is an adapter to allow the use of ordinary
+// function as AuthUser mutator.
+type AuthUserFunc func(context.Context, *ent.AuthUserMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f AuthUserFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.AuthUserMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.AuthUserMutation", m)
+}
+
 // The MailboxHiddenMessageFunc type is an adapter to allow the use of ordinary
 // function as MailboxHiddenMessage mutator.
 type MailboxHiddenMessageFunc func(context.Context, *ent.MailboxHiddenMessageMutation) (ent.Value, error)
