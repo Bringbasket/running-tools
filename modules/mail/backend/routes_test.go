@@ -163,6 +163,12 @@ func TestShareSessionScopesMessageDetailsToLinkedAlias(t *testing.T) {
 	if strings.Contains(latestBody, "safeHtml") || strings.Contains(latestBody, `\r\n`) || !strings.Contains(latestBody, `"codes":["123456"]`) || !strings.Contains(latestBody, `"text":"line one code: 123456"`) {
 		t.Fatalf("latest JSON was not compacted: %s", latestBody)
 	}
+	directRequest := httptest.NewRequest(http.MethodGet, "/mail?email=demo%40icloud.com&token="+url.QueryEscape(token), nil)
+	directResponse := httptest.NewRecorder()
+	mux.ServeHTTP(directResponse, directRequest)
+	if directResponse.Code != http.StatusOK || !strings.Contains(directResponse.Header().Get("Content-Type"), "application/json") || !strings.Contains(directResponse.Body.String(), `"alias":"demo@icloud.com"`) {
+		t.Fatalf("direct JSON share URL failed: %d %s", directResponse.Code, directResponse.Body.String())
+	}
 	sessionRequest := httptest.NewRequest(http.MethodPost, "/share/v1/session", bytes.NewReader(body))
 	sessionResponse := httptest.NewRecorder()
 	mux.ServeHTTP(sessionResponse, sessionRequest)

@@ -23,14 +23,15 @@ func TestShareLinkStoresOnlyDigestAndUsesSessionToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	url, ok := result["shareUrl"].(string)
-	if !ok || len(url) < 10 {
+	shareURL, ok := result["shareUrl"].(string)
+	if !ok || len(shareURL) < 10 {
 		t.Fatalf("missing share url: %#v", result)
 	}
-	if !strings.HasPrefix(url, "/share/#") {
-		t.Fatalf("share url must keep the hash-token format, got %q", url)
+	parsed, err := url.Parse(shareURL)
+	if err != nil || parsed.Path != "/mail" || parsed.Query().Get("email") != "demo@icloud.com" || parsed.Query().Get("token") == "" {
+		t.Fatalf("share url must be a direct JSON link, got %q", shareURL)
 	}
-	token := shareTokenFromURL(url)
+	token := shareTokenFromURL(shareURL)
 	session, link, ok := store.CreateSession(token, 3600)
 	if !ok || session == "" || link.Alias != "demo@icloud.com" {
 		t.Fatalf("session exchange failed")

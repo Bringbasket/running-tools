@@ -107,6 +107,7 @@ func (api *routeAPI) register(mux *http.ServeMux, auth httpx.Middleware, base st
 		mux.HandleFunc("GET /share/", api.sharePage)
 		mux.HandleFunc("GET /share/share.css", api.shareCSS)
 		mux.HandleFunc("GET /share/share.js", api.shareJS)
+		mux.HandleFunc("GET /mail", api.shareLatest)
 		mux.HandleFunc("POST /share/v1/session", api.shareSession)
 		mux.HandleFunc("GET /share/v1/info", api.shareInfo)
 		mux.HandleFunc("GET /share/v1/latest", api.shareLatest)
@@ -478,6 +479,10 @@ func (api *routeAPI) shareLatest(w http.ResponseWriter, r *http.Request) {
 	runtime, link, ok := api.shareTokenLink(r, r.URL.Query().Get("token"))
 	if !ok {
 		shareJSON(w, http.StatusGone, map[string]string{"error": "分享链接无效或已过期"})
+		return
+	}
+	if requestedAlias := shareAlias(r.URL.Query().Get("email")); requestedAlias != "" && requestedAlias != shareAlias(link.Alias) {
+		shareJSON(w, http.StatusGone, map[string]string{"error": "分享链接与邮箱不匹配"})
 		return
 	}
 	data := runtime.mailbox.MessagesDetailed(shareAlias(link.Alias), 1)

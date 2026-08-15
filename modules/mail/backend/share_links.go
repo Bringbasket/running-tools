@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -218,7 +219,8 @@ func (s *ShareLinkStore) CreateBatch(inputs []shareLinkCreateInput, expiresIn *i
 	}
 	out := make([]map[string]any, 0, len(links))
 	for index, link := range links {
-		item := map[string]any{"id": link.ID, "alias": link.Alias, "createdAt": link.CreatedAt, "expiresAt": link.ExpiresAt, "shareUrl": "/share/#" + tokens[index]}
+		item := map[string]any{"id": link.ID, "alias": link.Alias, "createdAt": link.CreatedAt, "expiresAt": link.ExpiresAt,
+			"shareUrl": "/mail?email=" + url.QueryEscape(link.Alias) + "&token=" + url.QueryEscape(tokens[index])}
 		if inputs[index].AliasCreatedAt > 0 {
 			item["aliasCreatedAt"] = inputs[index].AliasCreatedAt
 		}
