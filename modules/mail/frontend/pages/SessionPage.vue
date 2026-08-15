@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { ChevronRight, Clock3, KeyRound, LoaderCircle, RefreshCw, Save, ShieldAlert, ShieldCheck, Upload } from '../../../../frontend/src/icons'
 import { errorMessage } from '../../../../frontend/src/api'
 import { mailAPI } from '../api'
-import type { AutoRefreshStatus, SessionStatus } from '../types'
+import type { AppleChannelStatus, AutoRefreshStatus, SessionStatus } from '../types'
 import StatusBadge from '../components/StatusBadge.vue'
 
 type Channel = 'icloud_web' | 'apple_account'
@@ -33,8 +33,27 @@ const compatibilityOpen = ref(false)
 const sessionState = computed(() => !session.value?.persistedSession ? { state: 'neutral' as const, label: '未登录' } : session.value.needsReauth ? { state: 'invalid' as const, label: '需要重新登录' } : session.value.sessionValid ? { state: 'valid' as const, label: '有效' } : { state: 'neutral' as const, label: '等待检查' })
 const appleAccount = computed(() => session.value?.appleLogin?.appleAccount)
 const iCloudWeb = computed(() => session.value?.appleLogin?.icloudWeb)
-const currentCreateChannel = computed(() => session.value?.appleLogin?.createChannel === 'apple_account' ? 'Apple Account' : 'iCloud Web')
+const currentCreateChannel = computed(() => session.value?.appleLogin?.createChannel === 'apple_account' && isAppleAccountHealthy(appleAccount.value) ? 'Apple Account' : 'iCloud Web')
+const appleAccountHealth = computed(() => appleAccountHealthStatus(appleAccount.value))
 const loginTitle = computed(() => pendingId.value ? '输入验证码' : channel.value === 'icloud_web' ? '登录 iCloud Web' : '登录 Apple Account')
+
+type ChannelHealthStatus = { state: 'valid' | 'invalid' | 'neutral'; label: string }
+
+function isAppleAccountHealthy(value: AppleChannelStatus | undefined) {
+  if (!value || value.requiresReauth || value.state === 'reauth_required' || value.state === 'degraded' || (value.cooldownRemainingSeconds || 0) > 0) return false
+  if (value.healthy === false) return false
+  return value.state === 'healthy' || value.healthy === true
+}
+
+function appleAccountHealthStatus(value: AppleChannelStatus | undefined): ChannelHealthStatus {
+  if (value?.requiresReauth || value?.state === 'reauth_required') return { state: 'invalid', label: '需要重新登录' }
+  if (!value?.configured) return { state: 'neutral', label: '未登录' }
+  if (value.state === 'degraded') return { state: 'neutral', label: '临时异常，自动重试' }
+  if ((value.cooldownRemainingSeconds || 0) > 0) return { state: 'neutral', label: '冷却中' }
+  if (value.healthy === false) return { state: 'neutral', label: '临时异常，自动重试' }
+  if (value.state === 'healthy' || value.healthy) return { state: 'valid', label: '有效' }
+  return { state: 'neutral', label: '临时异常，自动重试' }
+}
 
 function formatTime(value: number | null | undefined) {
   return value ? new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'medium' }).format(new Date(value * 1000)) : '—'
@@ -83,6 +102,9 @@ function cancelVerification() { pendingId.value = ''; verificationCode.value = '
 
 function channelStatusText(value: typeof appleAccount.value, channelName: 'Apple Account' | 'iCloud Web') {
   if ((value?.cooldownRemainingSeconds || 0) > 0) return `创建冷却中 · ${formatDuration(value?.cooldownRemainingSeconds || 0)}`
+  if (channelName === 'Apple Account' && !isAppleAccountHealthy(value)) {
+    return value?.configured ? '暂不作为创建通道' : '未登录'
+  }
   if (value?.lastCreateAt) return `最近创建 ${formatTime(value.lastCreateAt)}`
   return channelName === 'Apple Account' ? '优先创建通道' : '邮箱管理与备用创建通道'
 }
@@ -156,7 +178,7 @@ onBeforeUnmount(() => window.removeEventListener('mail-account-change', handleAc
       <div class="channel-status-list">
         <div class="channel-status-row">
           <div class="channel-identity"><span class="channel-icon account"><KeyRound :size="17" /></span><div><strong>Apple Account</strong><small>{{ appleAccount?.appleId || '尚未登录' }}</small></div></div>
-          <div class="channel-meta"><span>{{ channelStatusText(appleAccount, 'Apple Account') }}</span><StatusBadge :state="appleAccount?.cooldownRemainingSeconds ? 'neutral' : appleAccount?.healthy ? 'valid' : appleAccount?.configured ? 'invalid' : 'neutral'" :label="appleAccount?.cooldownRemainingSeconds ? '冷却中' : appleAccount?.healthy ? '有效' : appleAccount?.configured ? '待自动恢复' : '未登录'" /></div>
+          <div class="channel-meta"><span>{{ channelStatusText(appleAccount, 'Apple Account') }}</span><StatusBadge :state="appleAccountHealth.state" :label="appleAccountHealth.label" /></div>
         </div>
         <div class="channel-status-row">
           <div class="channel-identity"><span class="channel-icon"><ShieldCheck :size="17" /></span><div><strong>iCloud Web</strong><small>{{ iCloudWeb?.appleId || session?.metadata?.host || '尚未登录' }}</small></div></div>

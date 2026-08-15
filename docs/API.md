@@ -257,8 +257,17 @@ Apple Account 管理态过期或首次返回认证失效时，服务会在确认
 
 `intervalSeconds` 最小为 300 秒。Apple Account 还会读取管理接口返回的短 TTL，按安全提前量
 把下一次检查提前；因此实际 `nextRunAt` 可能早于配置的固定间隔。iCloud Web 长 Session
-仍独立检查。只有主 Session 需要重新导入时才会关闭自动刷新，Apple Account 单独失败会保留
-Worker 并在 `lastError` 和使用日志中记录，等待下一轮恢复。
+仍独立检查。自动检查开关开启时，Apple Account 使用独立约 3 分钟、±15% 随机错峰的保活周期，
+并以 `/account/manage/forwardemail` 作为真实健康依据；`/v2/jslogs` 仅作补充。网络超时、连接
+错误和 HTTP 5xx 只会在读取或候选生成请求上有限重试；编辑、停用、删除和最终确认请求保持
+单次执行，避免上游已成功但响应丢失时重复改变数据。
+
+Session 状态中的 Apple Account 通道会返回 `state`：`healthy` 表示可用，`degraded` 表示临时
+异常且后台会继续重试，`reauth_required` 表示 Apple 已明确撤销管理态、需要重新登录。只有主
+Session 需要重新导入时才会关闭整个自动刷新；Apple Account 单独失效不会反复请求，健康的
+iCloud Web 仍可作为备用通道。过期的管理 TTL 在实际业务请求到达时仍会先尝试刷新，不会因为
+倒计时过期而永久跳过 Apple Account。保活不会保存密码或验证码，也不能在 Apple 返回
+`Invalid global session` 后免验证自动恢复。
 
 ### 自动创建计划
 

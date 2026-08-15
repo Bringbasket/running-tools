@@ -47,6 +47,7 @@ type SessionManager struct {
 	appleAuth           *AppleAuthClient
 	appleOperation      sync.Mutex
 	appleLoginOperation sync.Mutex
+	checkOperation      sync.Mutex
 	webOperation        sync.Mutex
 	createOperation     sync.Mutex
 	aliasTimestampMu    sync.Mutex
@@ -152,7 +153,40 @@ func (manager *SessionManager) appleAccountRefreshDueAt(now time.Time) (time.Tim
 	return account.refreshDueAt(now), true
 }
 
+func (manager *SessionManager) appleAccountKeepAliveSchedule(now time.Time) (time.Time, time.Time, bool) {
+	var account AppleAccountState
+	if storage.ReadJSON(manager.appleAccountPath, &account) != nil || len(account.Cookies) == 0 || account.requiresReauth() {
+		return time.Time{}, time.Time{}, false
+	}
+	anchor := account.LastCheckedAt
+	if account.LastAttemptAt.After(anchor) {
+		anchor = account.LastAttemptAt
+	}
+	deadline := account.refreshDueAt(now)
+	// A transient failure must not turn an expired deadline into a tight
+	// ten-second retry loop. Keep the next attempt bounded while preserving
+	// the last successful state for normal requests.
+	if account.LastAttemptAt.After(account.LastCheckedAt) {
+		minimumNext := account.LastAttemptAt.Add(appleKeepAliveInterval)
+		if deadline.Before(minimumNext) {
+			deadline = minimumNext
+		}
+	}
+	return anchor, deadline, true
+}
+
+func (manager *SessionManager) KeepAliveAppleAccount(ctx context.Context) error {
+	manager.appleOperation.Lock()
+	defer manager.appleOperation.Unlock()
+	return manager.checkAppleAccountLocked(ctx)
+}
+
 func (manager *SessionManager) Check(ctx context.Context) SessionStatus {
+	// The route and the background worker can request a check at the same time.
+	// Coalesce their work at the manager boundary so a manual click cannot race
+	// a scheduled check and rotate the same iCloud Web/Apple state twice.
+	manager.checkOperation.Lock()
+	defer manager.checkOperation.Unlock()
 	manager.mu.RLock()
 	status := manager.statusLocked()
 	manager.mu.RUnlock()
@@ -182,7 +216,10 @@ func (manager *SessionManager) Check(ctx context.Context) SessionStatus {
 	_ = storage.WriteJSON(manager.statePath, status.SessionState, 0o600)
 	manager.mu.Unlock()
 	manager.appleOperation.Lock()
-	manager.checkAppleAccountLocked(ctx)
+	// A normal Session check should not refresh the short-lived Apple
+	// management token on every request. The dedicated worker (or an explicit
+	// keep-alive call) forces a refresh when its TTL says it is due.
+	_ = manager.checkAppleAccountIfDueLocked(ctx)
 	manager.appleOperation.Unlock()
 	if !status.SessionValid {
 		if aliases, source, listErr := manager.listAliases(ctx); listErr == nil && source == AppleChannelAccount {
@@ -257,8 +294,11 @@ func (manager *SessionManager) persistAppleLoginResult(result AppleLoginStartRes
 		manager.appleOperation.Lock()
 		var account AppleAccountState
 		if storage.ReadJSON(manager.appleAccountPath, &account) == nil && !sameAppleAccount(result.webConfig.AppleID, account.AppleID) {
+			now := time.Now()
+			account.LastCheckedAt, account.LastAttemptAt = now, now
 			account.LastCheckOK = false
 			account.LastStatusMessage = "登录账号已切换，请为当前账号重新登录 Apple Account"
+			account.HealthState = AppleAccountStateReauthRequired
 			_ = storage.WriteJSON(manager.appleAccountPath, account, 0o600)
 		}
 		manager.appleOperation.Unlock()
@@ -307,7 +347,7 @@ func (manager *SessionManager) CreateAlias(ctx context.Context, label, note stri
 	var account AppleAccountState
 	var accountErr error
 	_, accountCooling := manager.channelCoolingDown(AppleChannelAccount)
-	if !accountCooling && storage.ReadJSON(manager.appleAccountPath, &account) == nil && sameAppleAccount(webConfig.AppleID, account.AppleID) && len(account.Cookies) > 0 {
+	if !accountCooling && storage.ReadJSON(manager.appleAccountPath, &account) == nil && account.availableForUse() && sameAppleAccount(webConfig.AppleID, account.AppleID) {
 		attempted = append(attempted, AppleChannelAccount)
 		alias, updated, err := manager.appleAuth.CreateWithAppleAccount(ctx, account, label, note)
 		_ = storage.WriteJSON(manager.appleAccountPath, updated, 0o600)
@@ -365,7 +405,7 @@ func (manager *SessionManager) listAliases(ctx context.Context) ([]map[string]an
 	manager.appleOperation.Lock()
 	var account AppleAccountState
 	var accountErr error
-	if storage.ReadJSON(manager.appleAccountPath, &account) == nil && len(account.Cookies) > 0 {
+	if storage.ReadJSON(manager.appleAccountPath, &account) == nil && account.availableForUse() {
 		aliases, updated, err := manager.appleAuth.ListWithAppleAccount(ctx, account)
 		_ = storage.WriteJSON(manager.appleAccountPath, updated, 0o600)
 		manager.appleOperation.Unlock()
@@ -498,7 +538,7 @@ func (manager *SessionManager) UpdateAlias(ctx context.Context, id, label, note 
 	manager.appleOperation.Lock()
 	defer manager.appleOperation.Unlock()
 	var account AppleAccountState
-	if storage.ReadJSON(manager.appleAccountPath, &account) == nil && len(account.Cookies) > 0 {
+	if storage.ReadJSON(manager.appleAccountPath, &account) == nil && account.availableForUse() {
 		result, updated, err := manager.appleAuth.UpdateWithAppleAccount(ctx, account, id, label, note)
 		_ = storage.WriteJSON(manager.appleAccountPath, updated, 0o600)
 		return result, err
@@ -517,7 +557,7 @@ func (manager *SessionManager) SetAliasActive(ctx context.Context, id string, ac
 	manager.appleOperation.Lock()
 	defer manager.appleOperation.Unlock()
 	var account AppleAccountState
-	if storage.ReadJSON(manager.appleAccountPath, &account) == nil && len(account.Cookies) > 0 {
+	if storage.ReadJSON(manager.appleAccountPath, &account) == nil && account.availableForUse() {
 		result, updated, err := manager.appleAuth.SetActiveWithAppleAccount(ctx, account, id, active)
 		_ = storage.WriteJSON(manager.appleAccountPath, updated, 0o600)
 		return result, err
@@ -536,7 +576,7 @@ func (manager *SessionManager) DeleteAlias(ctx context.Context, id string) (map[
 	manager.appleOperation.Lock()
 	defer manager.appleOperation.Unlock()
 	var account AppleAccountState
-	if storage.ReadJSON(manager.appleAccountPath, &account) == nil && len(account.Cookies) > 0 {
+	if storage.ReadJSON(manager.appleAccountPath, &account) == nil && account.availableForUse() {
 		result, updated, err := manager.appleAuth.DeleteWithAppleAccount(ctx, account, id)
 		_ = storage.WriteJSON(manager.appleAccountPath, updated, 0o600)
 		return result, err
@@ -552,8 +592,14 @@ func (manager *SessionManager) DeleteAlias(ctx context.Context, id string) (map[
 }
 
 func appleAccountAllowsWebFallback(err error) bool {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
 	var protocol *AppleProtocolError
-	return errors.As(err, &protocol) && (protocol.Code == "APPLE_ACCOUNT_SESSION_MISSING" || protocol.Code == "APPLE_ACCOUNT_EXPIRED")
+	if errors.As(err, &protocol) {
+		return protocol.Code == "APPLE_ACCOUNT_SESSION_MISSING" || protocol.Code == "APPLE_ACCOUNT_EXPIRED" || protocol.Retryable
+	}
+	return isAppleTransientNetworkError(err)
 }
 
 func decorateCreateResult(alias map[string]any, usedChannel string, attempted []string) {
@@ -650,36 +696,100 @@ func (manager *SessionManager) appleLoginStatusLocked() AppleLoginStatus {
 		_ = storage.ReadJSON(manager.configPath, &config)
 		accountMatches := sameAppleAccount(config.AppleID, account.AppleID)
 		result.AppleAccount.Configured = true
-		result.AppleAccount.Healthy = accountMatches && account.LastCheckOK && (account.ManageExpiresAt.IsZero() || time.Now().Before(account.ManageExpiresAt))
+		now := time.Now()
+		result.AppleAccount.Healthy = accountMatches && account.healthyForUse(now)
+		result.AppleAccount.State = account.HealthState
+		if !accountMatches || account.requiresReauth() {
+			result.AppleAccount.State = AppleAccountStateReauthRequired
+		} else {
+			switch result.AppleAccount.State {
+			case AppleAccountStateHealthy:
+				if !result.AppleAccount.Healthy {
+					result.AppleAccount.State = AppleAccountStateDegraded
+				}
+			case AppleAccountStateDegraded:
+				// Preserve an explicitly degraded state until the worker repairs it.
+			default:
+				// Older state files did not persist HealthState. Derive a
+				// compatible value instead of exposing healthy=true with a
+				// contradictory degraded state.
+				if result.AppleAccount.Healthy {
+					result.AppleAccount.State = AppleAccountStateHealthy
+				} else {
+					result.AppleAccount.State = AppleAccountStateDegraded
+				}
+			}
+		}
+		result.AppleAccount.RequiresReauth = !accountMatches || account.requiresReauth()
 		result.AppleAccount.AppleID = account.AppleID
 		result.AppleAccount.LastCheckedAt = unixPointer(account.LastCheckedAt)
+		result.AppleAccount.LastAttemptAt = unixPointer(account.LastAttemptAt)
 		result.AppleAccount.ExpiresAt = unixPointer(account.ManageExpiresAt)
 		result.AppleAccount.Message = account.LastStatusMessage
 	}
 	applyCreateRuntime(&result.AppleAccount, manager.createChannelRuntime(AppleChannelAccount))
-	if result.AppleAccount.Configured && sameAppleAccount(result.ICloudWeb.AppleID, result.AppleAccount.AppleID) && result.AppleAccount.CooldownRemaining == 0 {
+	if result.AppleAccount.Healthy && sameAppleAccount(result.ICloudWeb.AppleID, result.AppleAccount.AppleID) && result.AppleAccount.CooldownRemaining == 0 {
 		result.CreateChannel = AppleChannelAccount
 	}
 	return result
 }
 
-func (manager *SessionManager) checkAppleAccountLocked(ctx context.Context) {
+func (manager *SessionManager) checkAppleAccountLocked(ctx context.Context) error {
+	return manager.checkAppleAccountLockedWithForce(ctx, true)
+}
+
+func (manager *SessionManager) checkAppleAccountIfDueLocked(ctx context.Context) error {
+	return manager.checkAppleAccountLockedWithForce(ctx, false)
+}
+
+func (manager *SessionManager) checkAppleAccountLockedWithForce(ctx context.Context, force bool) error {
 	var account AppleAccountState
 	if storage.ReadJSON(manager.appleAccountPath, &account) != nil || len(account.Cookies) == 0 {
-		return
+		return nil
+	}
+	if account.requiresReauth() {
+		return appleProtocolError("APPLE_ACCOUNT_EXPIRED", account.LastStatusMessage, false)
+	}
+	if !force && account.healthyForUse(time.Now()) && !account.needsRefresh(time.Now()) {
+		return nil
 	}
 	config, _ := LoadICloudConfig(manager.configPath)
 	if !sameAppleAccount(config.AppleID, account.AppleID) {
-		account.LastCheckedAt = time.Now()
+		now := time.Now()
+		account.LastCheckedAt = now
+		account.LastAttemptAt = now
 		account.LastCheckOK = false
 		account.LastStatusMessage = "当前 iCloud Web 已切换账号，请重新登录 Apple Account"
-		_ = storage.WriteJSON(manager.appleAccountPath, account, 0o600)
-		return
+		account.HealthState = AppleAccountStateReauthRequired
+		if err := storage.WriteJSON(manager.appleAccountPath, account, 0o600); err != nil {
+			return fmt.Errorf("保存 Apple Account 账号状态: %w", err)
+		}
+		return appleProtocolError("APPLE_ACCOUNT_MISMATCH", account.LastStatusMessage, false)
 	}
+	previous := account
 	if err := manager.appleAuth.refreshAppleAccountState(ctx, &account); err != nil {
-		account.LastCheckedAt, account.LastCheckOK, account.LastStatusMessage = time.Now(), false, safeErrorText(err)
+		now := time.Now()
+		if appleAccountRequiresReauth(err) {
+			previous.LastCheckedAt, previous.LastAttemptAt = now, now
+			previous.LastCheckOK = false
+			previous.HealthState = AppleAccountStateReauthRequired
+			previous.LastStatusMessage = safeErrorText(err)
+		} else {
+			previous.LastAttemptAt = now
+			previous.HealthState = AppleAccountStateDegraded
+			previous.LastStatusMessage = "Apple Account 保活临时失败，将自动重试：" + safeErrorText(err)
+		}
+		if writeErr := storage.WriteJSON(manager.appleAccountPath, previous, 0o600); writeErr != nil {
+			return fmt.Errorf("保存 Apple Account 保活状态: %w", writeErr)
+		}
+		return err
 	}
-	_ = storage.WriteJSON(manager.appleAccountPath, account, 0o600)
+	account.HealthState = AppleAccountStateHealthy
+	account.LastAttemptAt = account.LastCheckedAt
+	if err := storage.WriteJSON(manager.appleAccountPath, account, 0o600); err != nil {
+		return fmt.Errorf("保存 Apple Account 保活结果: %w", err)
+	}
+	return nil
 }
 
 func unixNow() float64 { return float64(time.Now().UnixNano()) / float64(time.Second) }

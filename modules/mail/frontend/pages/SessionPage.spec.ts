@@ -1,6 +1,7 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import SessionPage from './SessionPage.vue'
+import type { SessionStatus } from '../types'
 
 const mocks = vi.hoisted(() => ({
   session: vi.fn(),
@@ -18,7 +19,7 @@ vi.mock('../api', () => ({
   },
 }))
 
-function status() {
+function status(): SessionStatus {
   return {
     metadataDetected: false,
     metadata: null,
@@ -38,6 +39,21 @@ function status() {
       createChannel: 'icloud_web',
     },
   }
+}
+
+function statusWithAppleAccount(state: 'healthy' | 'degraded' | 'reauth_required' | undefined, healthy: boolean, requiresReauth = false) {
+  const value = status()
+  value.persistedSession = true
+  value.appleLogin.icloudWeb = { configured: true, healthy: true, appleId: 'owner@example.com' }
+  value.appleLogin.appleAccount = {
+    configured: true,
+    healthy,
+    state,
+    requiresReauth,
+    appleId: 'owner@example.com',
+  }
+  value.appleLogin.createChannel = 'apple_account'
+  return value
 }
 
 describe('Apple 登录向导', () => {
@@ -82,5 +98,33 @@ describe('Apple 登录向导', () => {
     await wrapper.get('.compatibility-trigger').trigger('click')
     expect(wrapper.find('.compatibility-body').exists()).toBe(true)
     expect(wrapper.get('.compatibility-body').text()).not.toContain('iCloud 区域')
+  })
+
+  it.each([
+    { name: 'healthy', state: 'healthy' as const, healthy: true, requiresReauth: false, label: '有效', route: 'Apple Account' },
+    { name: 'degraded', state: 'degraded' as const, healthy: true, requiresReauth: false, label: '临时异常，自动重试', route: 'iCloud Web' },
+    { name: 'reauth required', state: 'reauth_required' as const, healthy: false, requiresReauth: true, label: '需要重新登录', route: 'iCloud Web' },
+    { name: 'legacy healthy', state: undefined, healthy: true, requiresReauth: false, label: '有效', route: 'Apple Account' },
+    { name: 'legacy expired', state: 'healthy' as const, healthy: false, requiresReauth: false, label: '临时异常，自动重试', route: 'iCloud Web' },
+  ])('按 Apple Account $name 状态展示健康标签并选择创建通道', async ({ state: healthState, healthy, requiresReauth, label, route }) => {
+    mocks.session.mockResolvedValue(statusWithAppleAccount(healthState, healthy, requiresReauth))
+    const wrapper = mount(SessionPage)
+    await flushPromises()
+
+    const accountRow = wrapper.findAll('.channel-status-row')[0]
+    expect(accountRow.text()).toContain(label)
+    expect(accountRow.find('.status-badge').text()).toContain(label)
+    expect(wrapper.get('.route-indicator').text()).toContain(route)
+    if (route === 'iCloud Web') expect(accountRow.text()).not.toContain('优先创建通道')
+  })
+
+  it('优先显示 Apple 创建冷却状态', async () => {
+    const value = statusWithAppleAccount('healthy', true)
+    value.appleLogin.appleAccount.cooldownRemainingSeconds = 120
+    mocks.session.mockResolvedValue(value)
+    const wrapper = mount(SessionPage)
+    await flushPromises()
+
+    expect(wrapper.findAll('.channel-status-row')[0].find('.status-badge').text()).toContain('冷却中')
   })
 })

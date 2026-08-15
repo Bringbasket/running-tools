@@ -2,6 +2,8 @@ package mail
 
 import (
 	"context"
+	"log/slog"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -16,6 +18,8 @@ const (
 	defaultRefreshInterval  = 600
 	minimumRefreshInterval  = 300
 	autoRefreshPollInterval = 10 * time.Second
+	appleKeepAliveInterval  = 3 * time.Minute
+	appleKeepAliveJitter    = 15
 )
 
 type AutoRefreshConfig struct {
@@ -33,15 +37,19 @@ type AutoRefreshConfig struct {
 }
 
 type AutoRefresh struct {
-	mu              sync.Mutex
-	path            string
-	session         *SessionManager
-	stop            chan struct{}
-	done            chan struct{}
-	running         bool
-	defaultInterval int
-	logs            *activitylog.Store
-	lastLoggedState string
+	mu                   sync.Mutex
+	runMu                sync.Mutex
+	path                 string
+	session              *SessionManager
+	stop                 chan struct{}
+	done                 chan struct{}
+	running              bool
+	defaultInterval      int
+	logs                 *activitylog.Store
+	lastLoggedState      string
+	lastAppleLoggedState string
+	appleTargetAt        time.Time
+	appleCheckedAt       time.Time
 }
 
 func (service *AutoRefresh) SetActivityLog(logs *activitylog.Store) { service.logs = logs }
@@ -64,7 +72,6 @@ func (service *AutoRefresh) Status() AutoRefreshConfig {
 	config.WorkerRunning = service.running
 	if config.Enabled {
 		base := now
-		hasLastRun := config.LastRunAt != nil
 		if config.LastRunAt != nil {
 			base = *config.LastRunAt
 		}
@@ -72,10 +79,10 @@ func (service *AutoRefresh) Status() AutoRefreshConfig {
 		// Apple Account management sessions expose a shorter, independent TTL.
 		// Keep the configured interval as the floor after a run, but pull the
 		// next check forward when the Apple deadline arrives first.
-		if due, ok := service.session.appleAccountRefreshDueAt(nowTime); ok {
+		if due, ok := service.appleKeepAliveDueAtLocked(nowTime); ok {
 			dueAt := float64(due.UnixNano()) / float64(time.Second)
 			switch {
-			case !hasLastRun && dueAt <= now:
+			case dueAt <= now:
 				next = now
 			case dueAt > now && dueAt < next:
 				next = dueAt
@@ -110,7 +117,16 @@ func (service *AutoRefresh) Run(ctx context.Context) (map[string]any, error) {
 	return service.run(ctx, "user")
 }
 
+func shouldDisableAutoRefresh(status SessionStatus) bool {
+	account := status.AppleLogin.AppleAccount
+	return status.NeedsReauth && (!account.Configured || account.RequiresReauth)
+}
+
 func (service *AutoRefresh) run(ctx context.Context, source string) (map[string]any, error) {
+	// Manual runs and the background ticker share the same Session check. Keep
+	// one in flight so a due tick cannot immediately duplicate a user request.
+	service.runMu.Lock()
+	defer service.runMu.Unlock()
 	status := service.session.Check(ctx)
 	service.mu.Lock()
 	defer service.mu.Unlock()
@@ -118,9 +134,13 @@ func (service *AutoRefresh) run(ctx context.Context, source string) (map[string]
 	now := unixNow()
 	config.LastRunAt = &now
 	appleConfigured := status.AppleLogin.AppleAccount.Configured
-	appleHealthy := !appleConfigured || status.AppleLogin.AppleAccount.Healthy
-	checkHealthy := status.SessionValid && appleHealthy && !status.NeedsReauth
-	if status.NeedsReauth && !status.AppleLogin.AppleAccount.Healthy {
+	appleReauth := appleConfigured && status.AppleLogin.AppleAccount.RequiresReauth
+	appleDegraded := appleConfigured && status.AppleLogin.AppleAccount.State == AppleAccountStateDegraded
+	checkHealthy := status.SessionValid && !status.NeedsReauth && !appleReauth && !appleDegraded
+	// A transient Apple Account outage must keep this worker alive so the
+	// independent keep-alive path can retry it. Disable only when there is no
+	// Apple channel to recover or Apple explicitly requires re-authentication.
+	if shouldDisableAutoRefresh(status) {
 		reason := "session requires re-import"
 		if status.LastError != nil {
 			reason = *status.LastError
@@ -133,10 +153,10 @@ func (service *AutoRefresh) run(ctx context.Context, source string) (map[string]
 		config.LastError, config.DisabledReason = nil, nil
 	} else {
 		// Keep an Apple Account failure visible even when the long-lived iCloud
-		// Web session itself is still valid. The worker must continue retrying
-		// this short-lived channel instead of disabling the whole service.
+		// Web session itself is still valid. A degraded Apple channel is not a
+		// session-wide failure; its independent worker will retry it.
 		message := ""
-		if !appleHealthy {
+		if appleReauth || appleDegraded {
 			message = status.AppleLogin.AppleAccount.Message
 		}
 		if message == "" && status.LastError != nil {
@@ -152,12 +172,15 @@ func (service *AutoRefresh) run(ctx context.Context, source string) (map[string]
 	if service.logs != nil && source == "background" {
 		level, outcome, summary := "info", "success", "Session 自动检测正常"
 		detail := ""
-		if !checkHealthy {
+		if appleDegraded && status.SessionValid && !status.NeedsReauth && !appleReauth {
+			level, outcome, summary = "warning", "failure", "Apple Account 保活临时异常，将自动重试"
+			detail = status.AppleLogin.AppleAccount.Message
+		} else if !checkHealthy {
 			level, outcome, summary = "error", "failure", "Session 自动检测发现登录失效"
 			if status.LastError != nil {
 				detail = *status.LastError
 			}
-			if detail == "" && !appleHealthy {
+			if detail == "" && (appleReauth || appleDegraded) {
 				detail = status.AppleLogin.AppleAccount.Message
 			}
 		}
@@ -211,12 +234,81 @@ func (service *AutoRefresh) Stop() {
 }
 
 func (service *AutoRefresh) runIfDue() {
-	config := service.Status()
-	if config.Enabled && config.RemainingSeconds != nil && *config.RemainingSeconds <= 0 {
-		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
-		defer cancel()
-		_, _ = service.run(ctx, "background")
+	service.mu.Lock()
+	config := service.loadLocked()
+	now := time.Now()
+	webDue := config.LastRunAt == nil || float64(now.UnixNano())/float64(time.Second) >= *config.LastRunAt+float64(config.IntervalSeconds)
+	appleDueAt, appleConfigured := service.appleKeepAliveDueAtLocked(now)
+	service.mu.Unlock()
+	if !config.Enabled {
+		return
 	}
+	if webDue {
+		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+		_, _ = service.run(ctx, "background")
+		cancel()
+		return
+	}
+	if appleConfigured && !now.Before(appleDueAt) {
+		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+		err := service.session.KeepAliveAppleAccount(ctx)
+		cancel()
+		service.recordAppleKeepAliveResult(err)
+	}
+}
+
+func (service *AutoRefresh) appleKeepAliveDueAtLocked(now time.Time) (time.Time, bool) {
+	checkedAt, deadline, eligible := service.session.appleAccountKeepAliveSchedule(now)
+	if !eligible {
+		service.appleTargetAt, service.appleCheckedAt = time.Time{}, time.Time{}
+		return time.Time{}, false
+	}
+	if service.appleTargetAt.IsZero() || !service.appleCheckedAt.Equal(checkedAt) {
+		spread := int64(appleKeepAliveInterval) * appleKeepAliveJitter / 100
+		offset := rand.Int64N(spread*2+1) - spread
+		service.appleCheckedAt = checkedAt
+		service.appleTargetAt = now
+		if !checkedAt.IsZero() {
+			service.appleTargetAt = checkedAt.Add(appleKeepAliveInterval + time.Duration(offset))
+		}
+	}
+	if !deadline.IsZero() && deadline.Before(service.appleTargetAt) {
+		return deadline, true
+	}
+	return service.appleTargetAt, true
+}
+
+func (service *AutoRefresh) recordAppleKeepAliveResult(err error) {
+	level, outcome, summary, detail := "info", "success", "Apple Account 保活成功", ""
+	if err != nil {
+		level, outcome, summary, detail = "warning", "failure", "Apple Account 保活临时失败", safeErrorText(err)
+		if appleAccountRequiresReauth(err) {
+			level, summary = "error", "Apple Account 登录态失效，需要重新登录"
+		}
+	}
+	stateKey := "apple:" + outcome + ":" + level
+	service.mu.Lock()
+	config := service.loadLocked()
+	now := unixNow()
+	if err == nil {
+		config.LastSuccessAt = &now
+		config.LastError, config.DisabledReason = nil, nil
+	} else {
+		config.LastError = &detail
+	}
+	if writeErr := storage.WriteJSON(service.path, persistentAutoRefresh(config), 0o600); writeErr != nil {
+		slog.Warn("Apple Account 保活状态保存失败", "error", safeErrorText(writeErr))
+	}
+	shouldLog := service.logs != nil && service.lastAppleLoggedState != stateKey
+	if shouldLog {
+		service.lastAppleLoggedState = stateKey
+	}
+	service.mu.Unlock()
+	if !shouldLog {
+		return
+	}
+	service.logs.Record(context.Background(), activitylog.Input{Category: "session", Action: "session.apple_account.keepalive",
+		Level: level, Outcome: outcome, Summary: summary, Source: "background", Detail: detail})
 }
 
 func (service *AutoRefresh) loadLocked() AutoRefreshConfig {

@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -452,5 +453,190 @@ func TestSessionListAliasesUsesAppleAccountWithoutICloudWeb(t *testing.T) {
 	aliases, source, err := manager.listAliases(context.Background())
 	if err != nil || source != AppleChannelAccount || len(aliases) != 1 || aliases[0]["hme"] != "only-account@icloud.com" {
 		t.Fatalf("unexpected list: source=%s aliases=%#v err=%v", source, aliases, err)
+	}
+}
+
+func TestAppleAccountRequestRetriesServerErrorsAndCommitsOnlySuccess(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if requests < 3 {
+			http.SetCookie(w, &http.Cookie{Name: "rotated", Value: "failed", Path: "/"})
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte(`{"reason":"temporary upstream failure"}`))
+			return
+		}
+		w.Header().Set("scnt", "fresh-scnt")
+		_, _ = w.Write([]byte(`{"timeOutInterval":15}`))
+	}))
+	defer server.Close()
+	client := NewAppleAuthClient()
+	client.httpClient = appleTestHTTPClient(server)
+	state := healthyAppleAccountState()
+	before := cloneAppleAccountState(&state)
+	var token struct {
+		TimeOutInterval int `json:"timeOutInterval"`
+	}
+	if _, err := client.appleAccountRequest(context.Background(), &state, http.MethodGet, "/account/manage/gs/ws/token", "", nil, &token); err != nil {
+		t.Fatal(err)
+	}
+	if requests != appleRequestMaxAttempts || token.TimeOutInterval != 15 {
+		t.Fatalf("unexpected retry result: requests=%d token=%#v", requests, token)
+	}
+	if state.Scnt != "fresh-scnt" || reflect.DeepEqual(state, before) {
+		t.Fatalf("successful response did not commit expected state: %#v", state)
+	}
+	if len(state.Cookies) != len(before.Cookies) || state.Cookies[0].Value != before.Cookies[0].Value {
+		t.Fatalf("failed response cookie leaked into state: %#v", state.Cookies)
+	}
+}
+
+func TestAppleAccountAuthResponseIsNotRetriedOrCommitted(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		http.SetCookie(w, &http.Cookie{Name: "rotated", Value: "failed", Path: "/"})
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"reason":"Invalid global session"}`))
+	}))
+	defer server.Close()
+	client := NewAppleAuthClient()
+	client.httpClient = appleTestHTTPClient(server)
+	state := healthyAppleAccountState()
+	before := cloneAppleAccountState(&state)
+	_, err := client.appleAccountRequest(context.Background(), &state, http.MethodGet, "/account/manage/gs/ws/token", "", nil, nil)
+	if err == nil || requests != 1 {
+		t.Fatalf("authentication response was retried: requests=%d err=%v", requests, err)
+	}
+	if !reflect.DeepEqual(state, before) {
+		t.Fatalf("authentication failure contaminated state: before=%#v after=%#v", before, state)
+	}
+}
+
+func TestAppleAccountGenericForbiddenIsNotTreatedAsExpired(t *testing.T) {
+	err := appleAccountHTTPErrorAt(http.StatusForbidden, []byte(`{"reason":"Forbidden"}`), false, "/account/manage")
+	var protocol *AppleProtocolError
+	if !errors.As(err, &protocol) {
+		t.Fatalf("error type = %T, want AppleProtocolError", err)
+	}
+	if protocol.Code == "APPLE_ACCOUNT_EXPIRED" || !protocol.Retryable {
+		t.Fatalf("generic forbidden response was treated as auth expiry: %#v", protocol)
+	}
+}
+
+func TestAppleAccountNoTTLWarmsAndRetriesWithoutScnt(t *testing.T) {
+	var requests []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.Method+" "+r.URL.Path+" scnt="+r.Header.Get("scnt"))
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/account/manage/gs/ws/token":
+			if r.Header.Get("scnt") == "" {
+				w.Header().Set("scnt", "refreshed-scnt")
+				_, _ = w.Write([]byte(`{"timeOutInterval":12}`))
+			} else {
+				_, _ = w.Write([]byte(`{}`))
+			}
+		case "/account/manage/section/privacy":
+			w.Header().Set("Content-Type", "text/html")
+			_, _ = w.Write([]byte("<html></html>"))
+		case "/bootstrap/portal":
+			_, _ = w.Write([]byte(`{"timeOutInterval":12}`))
+		case "/account/manage":
+			_, _ = w.Write([]byte(`{"apiKey":"refreshed-api-key"}`))
+		case "/account/manage/forwardemail":
+			_, _ = w.Write([]byte(`{"forwardToEmail":"owner@example.com"}`))
+		case "/v2/jslogs":
+			_, _ = w.Write([]byte(`{"ok":true}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	client := NewAppleAuthClient()
+	client.httpClient = appleTestHTTPClient(server)
+	state := healthyAppleAccountState()
+	state.ManageExpiresAt = time.Now().Add(-time.Minute)
+	if err := client.refreshAppleAccountState(context.Background(), &state); err != nil {
+		t.Fatal(err)
+	}
+	if state.APIKey != "refreshed-api-key" || state.Scnt != "refreshed-scnt" || !state.LastCheckOK {
+		t.Fatalf("state was not refreshed: %#v", state)
+	}
+	if !state.ManageExpiresAt.After(time.Now()) {
+		t.Fatalf("expired TTL was not replaced after successful verification: %v", state.ManageExpiresAt)
+	}
+	joined := strings.Join(requests, "\n")
+	if !strings.Contains(joined, "GET /account/manage/section/privacy") || !strings.Contains(joined, "GET /bootstrap/portal") || !strings.Contains(joined, "GET /account/manage/gs/ws/token scnt=") || !strings.Contains(joined, "POST /v2/jslogs") {
+		t.Fatalf("missing TTL recovery sequence: %s", joined)
+	}
+}
+
+func TestAppleAccountJSLogsFailureDoesNotFailHealthCheck(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/account/manage/gs/ws/token":
+			_, _ = w.Write([]byte(`{"timeOutInterval":15}`))
+		case "/account/manage":
+			_, _ = w.Write([]byte(`{"apiKey":"refreshed-api-key"}`))
+		case "/account/manage/forwardemail":
+			_, _ = w.Write([]byte(`{"forwardToEmail":"owner@example.com"}`))
+		case "/v2/jslogs":
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = w.Write([]byte(`{"reason":"logs unavailable"}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	client := NewAppleAuthClient()
+	client.httpClient = appleTestHTTPClient(server)
+	state := healthyAppleAccountState()
+	if err := client.refreshAppleAccountState(context.Background(), &state); err != nil {
+		t.Fatal(err)
+	}
+	if !state.LastCheckOK || state.APIKey != "refreshed-api-key" {
+		t.Fatalf("jslogs failure changed health result: %#v", state)
+	}
+}
+
+func TestAppleAccountManagementFailureMarksReauthWithoutRotatingState(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.SetCookie(w, &http.Cookie{Name: "rotated", Value: "bad", Path: "/"})
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"reason":"Invalid global session"}`))
+	}))
+	defer server.Close()
+	client := NewAppleAuthClient()
+	client.httpClient = appleTestHTTPClient(server)
+	state := healthyAppleAccountState()
+	original := cloneAppleAccountState(&state)
+	_, updated, err := client.ListWithAppleAccount(context.Background(), state)
+	if err == nil || !appleAccountRequiresReauth(err) {
+		t.Fatalf("expected re-authentication error, got %v", err)
+	}
+	if !updated.requiresReauth() || updated.LastCheckOK {
+		t.Fatalf("management failure did not persist reauth state: %#v", updated)
+	}
+	if !reflect.DeepEqual(updated.Cookies, original.Cookies) || updated.Scnt != original.Scnt || updated.APIKey != original.APIKey {
+		t.Fatalf("failed response rotated persisted credentials: before=%#v after=%#v", original, updated)
+	}
+}
+
+func TestAppleAccountMutationFailureIsNotRetried(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte(`{"reason":"temporary upstream failure"}`))
+	}))
+	defer server.Close()
+	client := NewAppleAuthClient()
+	client.httpClient = appleTestHTTPClient(server)
+	state := healthyAppleAccountState()
+	_, _, err := client.UpdateWithAppleAccount(context.Background(), state, "alias-id", "shopping", "")
+	if err == nil || requests != 1 {
+		t.Fatalf("mutating request was replayed: requests=%d err=%v", requests, err)
 	}
 }

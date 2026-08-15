@@ -138,6 +138,8 @@ export interface MailMessage {
   partnerCodes: string[]
 }
 
+export type AppleChannelState = 'healthy' | 'degraded' | 'reauth_required'
+
 export interface SessionStatus {
   metadataDetected: boolean
   metadata: { host: string; dsid: string; clientId: string } | null
@@ -158,8 +160,11 @@ export interface SessionStatus {
 export interface AppleChannelStatus {
   configured: boolean
   healthy: boolean
+  state?: AppleChannelState
+  requiresReauth?: boolean
   appleId?: string
   lastCheckedAt?: number
+  lastAttemptAt?: number
   expiresAt?: number
   message?: string
 	cooldownUntil?: number

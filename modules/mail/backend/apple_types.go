@@ -3,6 +3,7 @@ package mail
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -20,12 +21,15 @@ const (
 	// Apple Account's manage token is short-lived. Refresh it before the
 	// advertised deadline so a request is not started with a nearly expired
 	// token. The effective lead is reduced for very short TTLs below.
-	appleAccountRefreshLead  = 2 * time.Minute
-	appleAccountMinimumLead  = 30 * time.Second
-	appleAuthUserAgent       = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3.1 Safari/605.1.15"
-	appleAccountUserAgent    = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"
-	appleWebOAuthClientID    = "d39ba9916b7251055b22c7f910e2ea796ee65e98b2ddecea8f5dde8d9d1a815d"
-	appleManageOAuthClientID = "af1139274f266b22b68c2a3e7ad932cb3c0bbe854e13a79af78dcc73136882c3"
+	appleAccountRefreshLead         = 2 * time.Minute
+	appleAccountMinimumLead         = 30 * time.Second
+	appleAuthUserAgent              = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3.1 Safari/605.1.15"
+	appleAccountUserAgent           = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"
+	appleWebOAuthClientID           = "d39ba9916b7251055b22c7f910e2ea796ee65e98b2ddecea8f5dde8d9d1a815d"
+	appleManageOAuthClientID        = "af1139274f266b22b68c2a3e7ad932cb3c0bbe854e13a79af78dcc73136882c3"
+	AppleAccountStateHealthy        = "healthy"
+	AppleAccountStateDegraded       = "degraded"
+	AppleAccountStateReauthRequired = "reauth_required"
 )
 
 type AppleProtocolError struct {
@@ -65,6 +69,42 @@ type AppleAccountState struct {
 	LastCheckedAt     time.Time            `json:"lastCheckedAt,omitempty"`
 	LastCheckOK       bool                 `json:"lastCheckOk,omitempty"`
 	LastStatusMessage string               `json:"lastStatusMessage,omitempty"`
+	HealthState       string               `json:"healthState,omitempty"`
+	LastAttemptAt     time.Time            `json:"lastAttemptAt,omitempty"`
+}
+
+func (state AppleAccountState) requiresReauth() bool {
+	return state.HealthState == AppleAccountStateReauthRequired
+}
+
+// availableForUse reports whether a request may enter the Apple Account
+// client. The client refreshes an expired management token before the real
+// request, so an expired TTL alone must not force a permanent Web fallback.
+// Degraded and re-auth-required states are held back until the worker repairs
+// them (or the user logs in again).
+func (state AppleAccountState) availableForUse() bool {
+	return len(state.Cookies) > 0 && !state.requiresReauth() && state.HealthState != AppleAccountStateDegraded && state.LastCheckOK
+}
+
+// healthyForUse reports whether the persisted management state is currently
+// healthy. It is used for status and channel selection, where an expired TTL
+// should be shown as not healthy even though a subsequent request may refresh
+// it successfully.
+func (state AppleAccountState) healthyForUse(now time.Time) bool {
+	return state.availableForUse() && (state.ManageExpiresAt.IsZero() || now.Before(state.ManageExpiresAt))
+}
+
+func appleAccountRequiresReauth(err error) bool {
+	var protocol *AppleProtocolError
+	if !errors.As(err, &protocol) {
+		return false
+	}
+	switch protocol.Code {
+	case "APPLE_ACCOUNT_EXPIRED", "APPLE_ACCOUNT_MISMATCH", "APPLE_ACCOUNT_SESSION_MISSING":
+		return true
+	default:
+		return false
+	}
 }
 
 func (state AppleAccountState) refreshDueAt(now time.Time) time.Time {
@@ -91,8 +131,11 @@ func (state AppleAccountState) needsRefresh(now time.Time) bool {
 type AppleChannelStatus struct {
 	Configured          bool     `json:"configured"`
 	Healthy             bool     `json:"healthy"`
+	State               string   `json:"state,omitempty"`
+	RequiresReauth      bool     `json:"requiresReauth,omitempty"`
 	AppleID             string   `json:"appleId,omitempty"`
 	LastCheckedAt       *float64 `json:"lastCheckedAt,omitempty"`
+	LastAttemptAt       *float64 `json:"lastAttemptAt,omitempty"`
 	ExpiresAt           *float64 `json:"expiresAt,omitempty"`
 	Message             string   `json:"message,omitempty"`
 	CooldownUntil       *float64 `json:"cooldownUntil,omitempty"`

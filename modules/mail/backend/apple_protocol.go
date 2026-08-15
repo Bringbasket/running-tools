@@ -7,11 +7,130 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 )
+
+const (
+	appleRequestMaxAttempts       = 3
+	appleRequestRetryBaseDelay    = 150 * time.Millisecond
+	appleAccountFallbackManageTTL = 4 * time.Minute
+)
+
+// cloneAppleAccountState returns an isolated request working copy. Cookie
+// slices are mutable, so a shallow struct copy would still let a failed
+// response alter the persisted session.
+func cloneAppleAccountState(state *AppleAccountState) AppleAccountState {
+	if state == nil {
+		return AppleAccountState{}
+	}
+	copyState := *state
+	copyState.Cookies = append([]AppleSessionCookie(nil), state.Cookies...)
+	return copyState
+}
+
+func (client *AppleAuthClient) httpClientSnapshot() *http.Client {
+	client.httpMu.RLock()
+	httpClient := client.httpClient
+	client.httpMu.RUnlock()
+	return httpClient
+}
+
+// doAppleHTTP executes one Apple request with bounded retries. Only transport
+// failures and HTTP 5xx responses are retryable; authentication, rate-limit,
+// client, and mutation-confirmation responses are never retried here.
+func (client *AppleAuthClient) doAppleHTTP(ctx context.Context, method, rawURL string, headers map[string]string, body []byte, retryable bool) (*http.Response, []byte, error) {
+	httpClient := client.httpClientSnapshot()
+	if httpClient == nil {
+		return nil, nil, errors.New("Apple HTTP 客户端未初始化")
+	}
+	for attempt := 1; attempt <= appleRequestMaxAttempts; attempt++ {
+		request, err := http.NewRequestWithContext(ctx, method, rawURL, bytes.NewReader(body))
+		if err != nil {
+			return nil, nil, err
+		}
+		for key, value := range headers {
+			if strings.TrimSpace(value) != "" {
+				request.Header.Set(key, value)
+			}
+		}
+		response, err := httpClient.Do(request)
+		if err != nil {
+			if retryable && attempt < appleRequestMaxAttempts && isAppleTransientNetworkError(err) && ctx.Err() == nil {
+				if err := waitAppleRetry(ctx, attempt); err != nil {
+					return nil, nil, err
+				}
+				continue
+			}
+			return nil, nil, err
+		}
+		data, readErr := io.ReadAll(io.LimitReader(response.Body, 4<<20))
+		_ = response.Body.Close()
+		if readErr != nil {
+			if retryable && attempt < appleRequestMaxAttempts && isAppleTransientNetworkError(readErr) && ctx.Err() == nil {
+				if err := waitAppleRetry(ctx, attempt); err != nil {
+					return nil, nil, err
+				}
+				continue
+			}
+			return nil, nil, readErr
+		}
+		if retryable && attempt < appleRequestMaxAttempts && response.StatusCode >= 500 && response.StatusCode <= 599 && ctx.Err() == nil {
+			if err := waitAppleRetry(ctx, attempt); err != nil {
+				return nil, nil, err
+			}
+			continue
+		}
+		return response, data, nil
+	}
+	return nil, nil, errors.New("Apple 请求重试次数已用尽")
+}
+
+func waitAppleRetry(ctx context.Context, attempt int) error {
+	delay := appleRequestRetryBaseDelay * time.Duration(1<<(attempt-1))
+	if delay > time.Second {
+		delay = time.Second
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func isAppleTransientNetworkError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return netErr.Timeout() || netErr.Temporary()
+	}
+	text := strings.ToLower(err.Error())
+	for _, marker := range []string{"timeout", "timed out", "connection reset", "connection refused", "eof", "temporary"} {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func appleAccountRequestRetryable(method, path string) bool {
+	// Retry only idempotent reads and the pre-confirmation candidate request.
+	// Once a mutating operation can change an existing alias (or confirmation
+	// starts), a transport/5xx response is ambiguous and replaying it may apply
+	// the action twice.
+	if method == http.MethodGet || method == http.MethodHead {
+		return true
+	}
+	return method == http.MethodPost && path == "/account/manage/email/private/add"
+}
 
 func (client *AppleAuthClient) finishICloudWeb(ctx context.Context, session *appleAuthSession) (ICloudConfig, error) {
 	if session.SessionToken == "" {
@@ -140,60 +259,99 @@ func (client *AppleAuthClient) primeAppleAccount(ctx context.Context, session *a
 	return err
 }
 
+// refreshAppleAccountState refreshes the short-lived management state using an
+// isolated working copy. A failed request never writes rotated cookies or
+// headers into the caller's state.
 func (client *AppleAuthClient) refreshAppleAccountState(ctx context.Context, state *AppleAccountState) error {
 	if state == nil || len(state.Cookies) == 0 {
-		return appleProtocolError("APPLE_ACCOUNT_SESSION_MISSING", "未保存 Apple Account 登录态", false)
+		return appleProtocolError("APPLE_ACCOUNT_SESSION_MISSING", "Apple Account session is missing", false)
 	}
+	working := cloneAppleAccountState(state)
 	var token struct {
 		TimeOutInterval int `json:"timeOutInterval"`
 	}
-	scnt, err := client.appleAccountRequest(ctx, state, http.MethodGet, "/account/manage/gs/ws/token", "", nil, &token)
-	if scnt != "" {
-		state.Scnt = scnt
-	}
-	updateAppleAccountExpiry(state, token.TimeOutInterval)
-	if err != nil {
-		if warmErr := client.warmAppleAccount(ctx, state); warmErr != nil {
-			state.LastCheckOK, state.LastStatusMessage, state.LastCheckedAt = false, warmErr.Error(), time.Now()
-			return err
+	_, tokenErr := client.appleAccountRequest(ctx, &working, http.MethodGet, "/account/manage/gs/ws/token", "", nil, &token)
+	if tokenErr != nil {
+		if appleAccountRequiresReauth(tokenErr) {
+			return tokenErr
 		}
-		err = client.refreshAppleAccountTokenWithoutScnt(ctx, state, &token)
-		if err != nil {
-			state.LastCheckOK, state.LastStatusMessage, state.LastCheckedAt = false, err.Error(), time.Now()
-			return err
-		}
-		updateAppleAccountExpiry(state, token.TimeOutInterval)
-	}
-	manageErr := client.loadAppleAccountAPIKey(ctx, state)
-	if manageErr != nil || strings.TrimSpace(state.APIKey) == "" {
-		if warmErr := client.warmAppleAccount(ctx, state); warmErr != nil {
-			if manageErr != nil {
-				state.LastCheckOK, state.LastStatusMessage, state.LastCheckedAt = false, manageErr.Error(), time.Now()
-				return manageErr
+		if warmErr := client.warmAppleAccount(ctx, &working); warmErr != nil {
+			if appleAccountRequiresReauth(warmErr) {
+				return warmErr
 			}
-			state.LastCheckOK, state.LastStatusMessage, state.LastCheckedAt = false, warmErr.Error(), time.Now()
+			return tokenErr
+		}
+		var retryToken struct {
+			TimeOutInterval int `json:"timeOutInterval"`
+		}
+		if retryErr := client.refreshAppleAccountTokenWithoutScnt(ctx, &working, &retryToken); retryErr != nil {
+			return retryErr
+		} else {
+			token = retryToken
+		}
+	} else if token.TimeOutInterval <= 0 {
+		// A 2xx token response without a TTL is common during portal transitions.
+		// Warm the portal and retry the token endpoint without page-scoped scnt.
+		if warmErr := client.warmAppleAccount(ctx, &working); warmErr == nil {
+			var retryToken struct {
+				TimeOutInterval int `json:"timeOutInterval"`
+			}
+			if retryErr := client.refreshAppleAccountTokenWithoutScnt(ctx, &working, &retryToken); retryErr == nil {
+				token = retryToken
+			} else if appleAccountRequiresReauth(retryErr) {
+				return retryErr
+			}
+		} else if appleAccountRequiresReauth(warmErr) {
 			return warmErr
 		}
-		if err := client.refreshAppleAccountTokenWithoutScnt(ctx, state, &token); err != nil {
-			state.LastCheckOK, state.LastStatusMessage, state.LastCheckedAt = false, err.Error(), time.Now()
-			return err
+	}
+	updateAppleAccountExpiry(&working, token.TimeOutInterval)
+
+	manageErr := client.loadAppleAccountAPIKey(ctx, &working)
+	if manageErr != nil || strings.TrimSpace(working.APIKey) == "" {
+		if manageErr != nil && appleAccountRequiresReauth(manageErr) {
+			return manageErr
 		}
-		updateAppleAccountExpiry(state, token.TimeOutInterval)
-		manageErr = client.loadAppleAccountAPIKey(ctx, state)
+		if warmErr := client.warmAppleAccount(ctx, &working); warmErr != nil {
+			if appleAccountRequiresReauth(warmErr) {
+				return warmErr
+			}
+			if manageErr != nil {
+				return manageErr
+			}
+			return warmErr
+		}
+		var retryToken struct {
+			TimeOutInterval int `json:"timeOutInterval"`
+		}
+		if retryErr := client.refreshAppleAccountTokenWithoutScnt(ctx, &working, &retryToken); retryErr != nil {
+			return retryErr
+		}
+		updateAppleAccountExpiry(&working, retryToken.TimeOutInterval)
+		manageErr = client.loadAppleAccountAPIKey(ctx, &working)
 		if manageErr != nil {
-			state.LastCheckOK, state.LastStatusMessage, state.LastCheckedAt = false, manageErr.Error(), time.Now()
 			return manageErr
 		}
 	}
-	if strings.TrimSpace(state.APIKey) == "" {
-		state.LastCheckOK, state.LastCheckedAt = false, time.Now()
-		return appleProtocolError("APPLE_ACCOUNT_API_KEY_MISSING", "Apple Account 未返回动态接口密钥，请重新登录", true)
+	if strings.TrimSpace(working.APIKey) == "" {
+		return appleProtocolError("APPLE_ACCOUNT_API_KEY_MISSING", "Apple Account API key is missing", true)
 	}
-	if _, err := client.appleAccountRequest(ctx, state, http.MethodGet, "/account/manage/forwardemail", state.APIKey, nil, nil); err != nil {
-		state.LastCheckOK, state.LastStatusMessage, state.LastCheckedAt = false, err.Error(), time.Now()
-		return err
+	if _, verifyErr := client.appleAccountRequest(ctx, &working, http.MethodGet, "/account/manage/forwardemail", working.APIKey, nil, nil); verifyErr != nil {
+		return verifyErr
 	}
-	state.SavedAt, state.LastCheckedAt, state.LastCheckOK, state.LastStatusMessage = time.Now(), time.Now(), true, "新接口登录态正常"
+
+	// jslogs is only a browser-session hint. It is deliberately best effort;
+	// the real management endpoint above is the health check of record.
+	jsCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	_, _ = client.appleAccountRequest(jsCtx, &working, http.MethodPost, "/v2/jslogs", working.APIKey, appleAccountJSLogBody(), nil)
+	cancel()
+
+	now := time.Now()
+	if working.ManageExpiresAt.IsZero() || !working.ManageExpiresAt.After(now) {
+		working.ManageExpiresAt = now.Add(appleAccountFallbackManageTTL)
+	}
+	markAppleAccountHealthy(&working, now)
+	*state = working
 	return nil
 }
 
@@ -225,6 +383,7 @@ func (client *AppleAuthClient) loadAppleAccountAPIKey(ctx context.Context, state
 
 func (client *AppleAuthClient) ListWithAppleAccount(ctx context.Context, state AppleAccountState) ([]map[string]any, AppleAccountState, error) {
 	if err := client.ensureAppleAccountReady(ctx, &state); err != nil {
+		markAppleAccountFailure(&state, err, time.Now())
 		return nil, state, err
 	}
 	var result struct {
@@ -233,30 +392,35 @@ func (client *AppleAuthClient) ListWithAppleAccount(ctx context.Context, state A
 		InactivePrivateEmails []map[string]any `json:"inactivePrivateEmailList"`
 	}
 	if _, err := client.appleAccountRequest(ctx, &state, http.MethodGet, "/account/manage/email/private", state.APIKey, nil, &result); err != nil {
+		markAppleAccountFailure(&state, err, time.Now())
 		return nil, state, err
 	}
 	aliases := make([]map[string]any, 0, len(result.PrivateEmailList)+len(result.InactivePrivateEmails))
 	for _, item := range append(result.PrivateEmailList, result.InactivePrivateEmails...) {
 		aliases = append(aliases, normalizeAppleAccountAlias(item, result.ForwardToEmailAddress))
 	}
-	state.LastCheckedAt, state.LastCheckOK, state.LastStatusMessage = time.Now(), true, "新接口登录态正常"
+	markAppleAccountHealthy(&state, time.Now())
 	return aliases, state, nil
 }
 
 func (client *AppleAuthClient) UpdateWithAppleAccount(ctx context.Context, state AppleAccountState, id, label, note string) (map[string]any, AppleAccountState, error) {
 	if err := client.ensureAppleAccountReady(ctx, &state); err != nil {
+		markAppleAccountFailure(&state, err, time.Now())
 		return nil, state, err
 	}
 	path := "/account/manage/email/private/" + url.PathEscape(id) + "/note"
 	payload := map[string]string{"id": id, "label": label, "note": note}
 	if _, err := client.appleAccountRequest(ctx, &state, http.MethodPost, path, state.APIKey, payload, nil); err != nil {
+		markAppleAccountFailure(&state, err, time.Now())
 		return nil, state, err
 	}
+	markAppleAccountHealthy(&state, time.Now())
 	return map[string]any{"anonymousId": id, "label": label, "note": note}, state, nil
 }
 
 func (client *AppleAuthClient) SetActiveWithAppleAccount(ctx context.Context, state AppleAccountState, id string, active bool) (map[string]any, AppleAccountState, error) {
 	if err := client.ensureAppleAccountReady(ctx, &state); err != nil {
+		markAppleAccountFailure(&state, err, time.Now())
 		return nil, state, err
 	}
 	method, suffix := http.MethodDelete, "/stop"
@@ -265,25 +429,36 @@ func (client *AppleAuthClient) SetActiveWithAppleAccount(ctx context.Context, st
 	}
 	path := "/account/manage/email/private/" + url.PathEscape(id) + suffix
 	if _, err := client.appleAccountRequest(ctx, &state, method, path, state.APIKey, nil, nil); err != nil {
+		markAppleAccountFailure(&state, err, time.Now())
 		return nil, state, err
 	}
+	markAppleAccountHealthy(&state, time.Now())
 	return map[string]any{"anonymousId": id, "isActive": active}, state, nil
 }
 
 func (client *AppleAuthClient) DeleteWithAppleAccount(ctx context.Context, state AppleAccountState, id string) (map[string]any, AppleAccountState, error) {
 	if err := client.ensureAppleAccountReady(ctx, &state); err != nil {
+		markAppleAccountFailure(&state, err, time.Now())
 		return nil, state, err
 	}
 	path := "/account/manage/email/private/" + url.PathEscape(id) + "/remove"
 	if _, err := client.appleAccountRequest(ctx, &state, http.MethodDelete, path, state.APIKey, nil, nil); err != nil {
+		markAppleAccountFailure(&state, err, time.Now())
 		return nil, state, err
 	}
+	markAppleAccountHealthy(&state, time.Now())
 	return map[string]any{"anonymousId": id, "deleted": true}, state, nil
 }
 
 func (client *AppleAuthClient) ensureAppleAccountReady(ctx context.Context, state *AppleAccountState) error {
 	if state == nil || len(state.Cookies) == 0 {
 		return appleProtocolError("APPLE_ACCOUNT_SESSION_MISSING", "尚未登录 Apple Account", false)
+	}
+	if state.requiresReauth() {
+		return appleProtocolError("APPLE_ACCOUNT_EXPIRED", "Apple Account 登录态已失效，请重新登录", false)
+	}
+	if state.HealthState == AppleAccountStateDegraded {
+		return appleProtocolError("APPLE_ACCOUNT_DEGRADED", "Apple Account 暂时不可用，后台正在重试", true)
 	}
 	if !state.needsRefresh(time.Now()) {
 		return nil
@@ -296,6 +471,46 @@ func updateAppleAccountExpiry(state *AppleAccountState, timeoutMinutes int) {
 		return
 	}
 	state.ManageExpiresAt = time.Now().Add(time.Duration(timeoutMinutes) * time.Minute)
+}
+
+func markAppleAccountHealthy(state *AppleAccountState, now time.Time) {
+	if state == nil {
+		return
+	}
+	state.SavedAt = now
+	state.LastCheckedAt = now
+	state.LastAttemptAt = now
+	state.LastCheckOK = true
+	state.HealthState = AppleAccountStateHealthy
+	state.LastStatusMessage = "Apple Account 登录态正常"
+}
+
+// markAppleAccountFailure converts an operation error into persistent channel
+// health without replacing cookies, scnt, or the last known-good API key.
+// Transient failures retain LastCheckOK/LastCheckedAt so the worker can recover
+// the same session; explicit authentication failures require a fresh login.
+func markAppleAccountFailure(state *AppleAccountState, err error, now time.Time) {
+	if state == nil || err == nil {
+		return
+	}
+	state.LastAttemptAt = now
+	if appleAccountRequiresReauth(err) {
+		state.LastCheckedAt = now
+		state.LastCheckOK = false
+		state.HealthState = AppleAccountStateReauthRequired
+		state.LastStatusMessage = "Apple Account 登录态已失效：" + safeErrorText(err)
+		return
+	}
+	var protocol *AppleProtocolError
+	if errors.As(err, &protocol) && protocol.Code == "APPLE_ACCOUNT_LIMIT" {
+		// A creation quota response is a business limit, not evidence that the
+		// management session is broken. Keep the healthy channel visible while
+		// the separate create-channel cooldown controls the next attempt.
+		state.LastStatusMessage = safeErrorText(err)
+		return
+	}
+	state.HealthState = AppleAccountStateDegraded
+	state.LastStatusMessage = "Apple Account 请求临时失败，将自动重试：" + safeErrorText(err)
 }
 
 func normalizeAppleAccountAlias(item map[string]any, defaultForward string) map[string]any {
@@ -340,104 +555,107 @@ func (client *AppleAuthClient) warmAppleAccount(ctx context.Context, state *Appl
 }
 
 func (client *AppleAuthClient) appleAccountPortalRequest(ctx context.Context, state *AppleAccountState, path string, jsonContent bool) ([]byte, error) {
-	rawURL := strings.TrimRight(firstNonEmpty(state.Origin, "https://account.apple.com"), "/") + path
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
-	if err != nil {
-		return nil, err
+	if state == nil {
+		return nil, errors.New("Apple Account session is missing")
 	}
-	request.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7")
-	request.Header.Set("Referer", strings.TrimRight(state.Origin, "/")+"/")
-	request.Header.Set("User-Agent", appleAccountUserAgent)
-	request.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
-	request.Header.Set("Sec-CH-UA", `"Google Chrome";v="149", "Chromium";v="149", "Not)A;Brand";v="24"`)
-	request.Header.Set("Sec-CH-UA-Mobile", "?0")
-	request.Header.Set("Sec-CH-UA-Platform", `"macOS"`)
-	request.Header.Set("Sec-Fetch-Site", "same-origin")
+	working := cloneAppleAccountState(state)
+	rawURL := strings.TrimRight(firstNonEmpty(working.Origin, "https://account.apple.com"), "/") + path
+	headers := map[string]string{
+		"Accept":             "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+		"Referer":            strings.TrimRight(working.Origin, "/") + "/",
+		"User-Agent":         appleAccountUserAgent,
+		"Accept-Language":    "zh-CN,zh;q=0.9,en;q=0.8",
+		"Sec-CH-UA":          `"Google Chrome";v="149", "Chromium";v="149", "Not)A;Brand";v="24"`,
+		"Sec-CH-UA-Mobile":   "?0",
+		"Sec-CH-UA-Platform": `"macOS"`,
+		"Sec-Fetch-Site":     "same-origin",
+	}
 	if jsonContent {
-		request.Header.Set("Content-Type", "application/json")
-		request.Header.Set("X-Apple-I-Request-Context", "ca")
-		request.Header.Set("X-Apple-I-TimeZone", "Asia/Shanghai")
-		request.Header.Set("X-Apple-I-FD-Client-Info", appleFDClientInfo(appleAccountUserAgent))
-		request.Header.Set("Sec-Fetch-Dest", "empty")
-		request.Header.Set("Sec-Fetch-Mode", "cors")
+		headers["Content-Type"] = "application/json"
+		headers["X-Apple-I-Request-Context"] = "ca"
+		headers["X-Apple-I-TimeZone"] = "Asia/Shanghai"
+		headers["X-Apple-I-FD-Client-Info"] = appleFDClientInfo(appleAccountUserAgent)
+		headers["Sec-Fetch-Dest"] = "empty"
+		headers["Sec-Fetch-Mode"] = "cors"
 	} else {
-		request.Header.Set("Sec-Fetch-Dest", "document")
-		request.Header.Set("Sec-Fetch-Mode", "navigate")
+		headers["Sec-Fetch-Dest"] = "document"
+		headers["Sec-Fetch-Mode"] = "navigate"
 	}
-	if cookie := appleCookieHeader(state.Cookies, rawURL); cookie != "" {
-		request.Header.Set("Cookie", cookie)
+	if cookie := appleCookieHeader(working.Cookies, rawURL); cookie != "" {
+		headers["Cookie"] = cookie
 	}
-	response, err := client.httpClient.Do(request)
+	response, data, err := client.doAppleHTTP(ctx, http.MethodGet, rawURL, headers, nil, true)
 	if err != nil {
 		return nil, err
 	}
-	defer response.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(response.Body, 4<<20))
-	if err != nil {
-		return nil, err
+	requestURL := response.Request.URL
+	if requestURL == nil {
+		requestURL, _ = url.Parse(rawURL)
 	}
-	mergeAppleCookies(&state.Cookies, response.Request.URL, response.Cookies())
-	updateAppleAccountHeaders(state, response.Header)
+	mergeAppleCookies(&working.Cookies, requestURL, response.Cookies())
+	updateAppleAccountHeaders(&working, response.Header)
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return data, appleAccountHTTPErrorAt(response.StatusCode, data, false, path)
 	}
+	*state = working
 	return data, nil
 }
 
 func (client *AppleAuthClient) appleAccountRequest(ctx context.Context, state *AppleAccountState, method, path, apiKey string, body, result any) (string, error) {
-	base := "https://" + firstNonEmpty(state.Host, "appleid.apple.com")
+	if state == nil {
+		return "", errors.New("Apple Account session is missing")
+	}
+	working := cloneAppleAccountState(state)
+	base := "https://" + firstNonEmpty(working.Host, "appleid.apple.com")
 	rawURL := strings.TrimRight(base, "/") + path
-	var reader io.Reader
+	var bodyData []byte
 	if body != nil {
 		data, err := json.Marshal(body)
 		if err != nil {
 			return "", err
 		}
-		reader = bytes.NewReader(data)
+		bodyData = data
 	}
-	request, err := http.NewRequestWithContext(ctx, method, rawURL, reader)
-	if err != nil {
-		return "", err
+	headers := map[string]string{
+		"Accept":                    "application/json, text/plain, */*",
+		"Content-Type":              "application/json",
+		"Origin":                    firstNonEmpty(working.Origin, "https://account.apple.com"),
+		"Referer":                   strings.TrimRight(firstNonEmpty(working.Origin, "https://account.apple.com"), "/") + "/",
+		"User-Agent":                appleAccountUserAgent,
+		"Accept-Language":           "zh-CN,zh;q=0.9,en;q=0.8",
+		"X-Apple-I-Request-Context": "ca",
+		"X-Apple-I-TimeZone":        "Asia/Shanghai",
+		"X-Apple-I-FD-Client-Info":  appleFDClientInfo(appleAccountUserAgent),
+		"Sec-CH-UA":                 `"Google Chrome";v="149", "Chromium";v="149", "Not)A;Brand";v="24"`,
+		"Sec-CH-UA-Mobile":          "?0",
+		"Sec-CH-UA-Platform":        `"macOS"`,
+		"Sec-Fetch-Site":            "same-site",
+		"Sec-Fetch-Mode":            "cors",
+		"Sec-Fetch-Dest":            "empty",
 	}
-	request.Header.Set("Accept", "application/json, text/plain, */*")
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Origin", firstNonEmpty(state.Origin, "https://account.apple.com"))
-	request.Header.Set("Referer", strings.TrimRight(firstNonEmpty(state.Origin, "https://account.apple.com"), "/")+"/")
-	request.Header.Set("User-Agent", appleAccountUserAgent)
-	request.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
-	request.Header.Set("X-Apple-I-Request-Context", "ca")
-	request.Header.Set("X-Apple-I-TimeZone", "Asia/Shanghai")
-	request.Header.Set("X-Apple-I-FD-Client-Info", appleFDClientInfo(appleAccountUserAgent))
-	request.Header.Set("Sec-CH-UA", `"Google Chrome";v="149", "Chromium";v="149", "Not)A;Brand";v="24"`)
-	request.Header.Set("Sec-CH-UA-Mobile", "?0")
-	request.Header.Set("Sec-CH-UA-Platform", `"macOS"`)
-	request.Header.Set("Sec-Fetch-Site", "same-site")
-	request.Header.Set("Sec-Fetch-Mode", "cors")
-	request.Header.Set("Sec-Fetch-Dest", "empty")
-	if state.Scnt != "" {
-		request.Header.Set("scnt", state.Scnt)
+	if working.Scnt != "" {
+		headers["scnt"] = working.Scnt
 	}
-	if state.SessionID != "" {
-		request.Header.Set("X-Apple-ID-Session-Id", state.SessionID)
+	if working.SessionID != "" {
+		headers["X-Apple-ID-Session-Id"] = working.SessionID
 	}
 	if apiKey != "" {
-		request.Header.Set("X-Apple-Api-Key", apiKey)
+		headers["X-Apple-Api-Key"] = apiKey
 	}
-	if cookie := appleCookieHeader(state.Cookies, rawURL); cookie != "" {
-		request.Header.Set("Cookie", cookie)
+	if cookie := appleCookieHeader(working.Cookies, rawURL); cookie != "" {
+		headers["Cookie"] = cookie
 	}
-	response, err := client.httpClient.Do(request)
-	if err != nil {
-		return "", err
-	}
-	defer response.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(response.Body, 4<<20))
+	response, data, err := client.doAppleHTTP(ctx, method, rawURL, headers, bodyData, appleAccountRequestRetryable(method, path))
 	if err != nil {
 		return "", err
 	}
 	scnt := response.Header.Get("scnt")
-	mergeAppleCookies(&state.Cookies, response.Request.URL, response.Cookies())
-	updateAppleAccountHeaders(state, response.Header)
+	requestURL := response.Request.URL
+	if requestURL == nil {
+		requestURL, _ = url.Parse(rawURL)
+	}
+	mergeAppleCookies(&working.Cookies, requestURL, response.Cookies())
+	updateAppleAccountHeaders(&working, response.Header)
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return scnt, appleAccountHTTPErrorAt(response.StatusCode, data, method == http.MethodPut && path == "/account/manage/email/private/add/complete", path)
 	}
@@ -446,9 +664,10 @@ func (client *AppleAuthClient) appleAccountRequest(ctx context.Context, state *A
 	}
 	if result != nil && len(bytes.TrimSpace(data)) > 0 {
 		if err := json.Unmarshal(data, result); err != nil {
-			return scnt, appleProtocolError("APPLE_ACCOUNT_BAD_RESPONSE", "Apple Account 接口返回无法解析", true)
+			return scnt, appleProtocolError("APPLE_ACCOUNT_BAD_RESPONSE", "Apple Account response could not be parsed", true)
 		}
 	}
+	*state = working
 	return scnt, nil
 }
 
@@ -491,10 +710,40 @@ func appleAccountHTTPErrorAt(status int, data []byte, mayHaveCreated bool, path 
 	}
 	if strings.Contains(lower, "limit") || strings.Contains(lower, "too many") || strings.Contains(lower, "rate") {
 		code, message = "APPLE_ACCOUNT_LIMIT", "Apple Account 已达到当前创建限额，请稍后再试"
-	} else if status == 401 || status == 403 || status == 419 || strings.Contains(lower, "invalid session") || strings.Contains(lower, "invalid global session") || strings.Contains(lower, "session expired") {
+	} else if status == 419 || appleAccountBodyLooksAuthExpired(lower) {
 		code, message = "APPLE_ACCOUNT_EXPIRED", "Apple Account 登录态已失效，请重新登录"
 	}
-	return &AppleProtocolError{Code: code, Message: message, Retryable: true, MayHaveCreated: mayHaveCreated, RetryAfter: retryAfter}
+	retryable := code != "APPLE_ACCOUNT_EXPIRED"
+	return &AppleProtocolError{Code: code, Message: message, Retryable: retryable, MayHaveCreated: mayHaveCreated, RetryAfter: retryAfter}
+}
+
+// appleAccountBodyLooksAuthExpired keeps generic 401/403 responses (for
+// example, a temporary anti-bot or upstream policy response) in the retryable
+// degraded state. Only explicit session/authentication markers are strong
+// enough to require a new Apple Account login.
+func appleAccountBodyLooksAuthExpired(lower string) bool {
+	lower = strings.ToLower(strings.TrimSpace(lower))
+	if lower == "" {
+		return false
+	}
+	for _, marker := range []string{
+		"authentication_failed",
+		"authentication failed",
+		"auth_failed",
+		"auth failed",
+		"gsa_invalid_session",
+		"invalid global session",
+		"invalid_global_session",
+		"invalid session",
+		"scnt_expired",
+		"session expired",
+		"session has expired",
+	} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return strings.Contains(lower, "authentication") && (strings.Contains(lower, "failed") || strings.Contains(lower, "expired"))
 }
 
 // appleAccountErrorBody extracts only short, non-secret fields from Apple's
@@ -541,6 +790,30 @@ func truncateAppleError(value string) string {
 	return value
 }
 
+func appleAccountJSLogBody() []map[string]any {
+	eventID, err := randomUUID()
+	if err != nil {
+		eventID = fmt.Sprintf("running-tools-%d", time.Now().UnixNano())
+	}
+	return []map[string]any{{
+		"eventId":       eventID,
+		"timestamp":     time.Now().UnixMilli(),
+		"eventType":     "custom",
+		"componentName": "performance",
+		"action":        "memory",
+		"metadata": map[string]any{
+			"domNodeCount":    0,
+			"usedJSHeapSize":  0,
+			"totalJSHeapSize": 0,
+			"heapUtilization": 0,
+			"createdAt":       0,
+			"elapsedTime":     0,
+			"marks":           map[string]any{"startTime": 0},
+			"eventVersion":    1,
+		},
+	}}
+}
+
 func appleAccountRequestStage(path string) string {
 	switch {
 	case path == "/account/manage/gs/ws/token":
@@ -551,6 +824,8 @@ func appleAccountRequestStage(path string) string {
 		return "打开隐私页面"
 	case path == "/bootstrap/portal":
 		return "预热门户"
+	case path == "/v2/jslogs":
+		return "Apple browser session hint"
 	case path == "/account/manage/forwardemail":
 		return "读取转发邮箱"
 	case path == "/account/manage/email/private":
@@ -565,21 +840,36 @@ func appleAccountRequestStage(path string) string {
 }
 
 func (client *AppleAuthClient) CreateWithAppleAccount(ctx context.Context, state AppleAccountState, label, note string) (map[string]any, AppleAccountState, error) {
+	if state.requiresReauth() {
+		err := appleProtocolError("APPLE_ACCOUNT_EXPIRED", "Apple Account 登录态已失效，请重新登录", false)
+		markAppleAccountFailure(&state, err, time.Now())
+		return nil, state, err
+	}
+	if state.HealthState == AppleAccountStateDegraded {
+		err := appleProtocolError("APPLE_ACCOUNT_DEGRADED", "Apple Account 暂时不可用，后台正在重试", true)
+		markAppleAccountFailure(&state, err, time.Now())
+		return nil, state, err
+	}
 	refreshedBeforeCreate := false
 	if state.needsRefresh(time.Now()) {
 		if err := client.refreshAppleAccountState(ctx, &state); err != nil {
+			markAppleAccountFailure(&state, err, time.Now())
 			return nil, state, err
 		}
 		refreshedBeforeCreate = true
 	}
 	alias, updated, err := client.createWithAppleAccountState(ctx, state, label, note)
 	if err == nil || refreshedBeforeCreate || !appleAccountAuthExpiredBeforeConfirmation(err) {
+		markAppleAccountFailure(&updated, err, time.Now())
 		return alias, updated, err
 	}
 	if refreshErr := client.refreshAppleAccountState(ctx, &updated); refreshErr != nil {
+		markAppleAccountFailure(&updated, refreshErr, time.Now())
 		return nil, updated, refreshErr
 	}
-	return client.createWithAppleAccountState(ctx, updated, label, note)
+	alias, updated, err = client.createWithAppleAccountState(ctx, updated, label, note)
+	markAppleAccountFailure(&updated, err, time.Now())
+	return alias, updated, err
 }
 
 func (client *AppleAuthClient) createWithAppleAccountState(ctx context.Context, state AppleAccountState, label, note string) (map[string]any, AppleAccountState, error) {
@@ -617,6 +907,7 @@ func (client *AppleAuthClient) createWithAppleAccountState(ctx context.Context, 
 		"detailConfirmed": false,
 		"createTimestamp": float64(time.Now().UnixMilli()),
 	}
+	detailAuthFailure := false
 	if strings.TrimSpace(completed.ID) != "" {
 		var confirmed struct {
 			EmailAddress   string `json:"emailAddress"`
@@ -635,9 +926,17 @@ func (client *AppleAuthClient) createWithAppleAccountState(ctx context.Context, 
 			alias["forwardToEmail"] = confirmed.ForwardToEmail
 			alias["isActive"] = confirmed.Active
 			alias["detailConfirmed"] = true
+		} else if appleAccountRequiresReauth(detailErr) {
+			// The alias has already been confirmed. Return the successful alias,
+			// but retain the explicit auth failure so the next operation uses Web
+			// and the UI asks for a fresh Apple Account login.
+			markAppleAccountFailure(&state, detailErr, time.Now())
+			detailAuthFailure = true
 		}
 	}
-	state.LastCheckedAt, state.LastCheckOK, state.LastStatusMessage = time.Now(), true, "新接口登录态正常"
+	if !detailAuthFailure {
+		markAppleAccountHealthy(&state, time.Now())
+	}
 	return alias, state, nil
 }
 
