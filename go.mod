@@ -7,6 +7,7 @@ require (
 	github.com/emersion/go-imap/v2 v2.0.0-beta.8
 	github.com/jackc/pgx/v5 v5.7.6
 	github.com/redis/go-redis/v9 v9.12.1
+	golang.org/x/net v0.37.0
 )
 
 require (

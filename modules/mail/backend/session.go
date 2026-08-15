@@ -53,12 +53,16 @@ type SessionManager struct {
 	aliasTimestampMu    sync.Mutex
 	channelStateMu      sync.Mutex
 	proxyURL            string
+	proxyDial           proxyDialContext
+	proxyRevision       uint64
+	proxyObservers      []func()
 	httpClient          *http.Client
 	newClient           func(ICloudConfig) (*Client, error)
 }
 
 func NewSessionManager(configPath, stateDir string) *SessionManager {
 	httpClient, _ := httpClientForProxy("")
+	proxyDial, _ := tcpDialContextForProxy("", 20*time.Second)
 	manager := &SessionManager{
 		configPath:         configPath,
 		metadataPath:       filepath.Join(stateDir, "hme-session.json"),
@@ -68,6 +72,8 @@ func NewSessionManager(configPath, stateDir string) *SessionManager {
 		aliasTimestampPath: filepath.Join(stateDir, "alias-timestamps.json"),
 		appleAuth:          NewAppleAuthClient(),
 		httpClient:         httpClient,
+		proxyDial:          proxyDial,
+		proxyRevision:      1,
 	}
 	manager.newClient = func(config ICloudConfig) (*Client, error) {
 		manager.mu.RLock()
@@ -99,22 +105,81 @@ func (manager *SessionManager) SetProxy(raw string) error {
 	if err != nil {
 		return err
 	}
+	proxyDial, err := tcpDialContextForProxy(proxyURL, 20*time.Second)
+	if err != nil {
+		return err
+	}
 	manager.appleLoginOperation.Lock()
-	defer manager.appleLoginOperation.Unlock()
 	manager.appleOperation.Lock()
-	defer manager.appleOperation.Unlock()
 	manager.webOperation.Lock()
-	defer manager.webOperation.Unlock()
 	manager.mu.Lock()
 	previous := manager.httpClient
+	changed := manager.proxyURL != proxyURL
 	manager.proxyURL = proxyURL
 	manager.httpClient = httpClient
+	manager.proxyDial = proxyDial
+	if manager.proxyRevision == 0 {
+		manager.proxyRevision = 1
+	}
+	var observers []func()
+	if changed {
+		manager.proxyRevision++
+		observers = make([]func(), 0, len(manager.proxyObservers))
+		for _, observer := range manager.proxyObservers {
+			observers = append(observers, observer)
+		}
+	}
 	manager.mu.Unlock()
 	manager.appleAuth.SetHTTPClient(httpClient)
+	manager.webOperation.Unlock()
+	manager.appleOperation.Unlock()
+	manager.appleLoginOperation.Unlock()
 	if previous != nil {
 		previous.CloseIdleConnections()
 	}
+	for _, observer := range observers {
+		observer()
+	}
 	return nil
+}
+
+func (manager *SessionManager) imapProxySnapshot() (proxyDialContext, uint64, error) {
+	if manager == nil {
+		dial, err := tcpDialContextForProxy("", 20*time.Second)
+		return dial, 0, err
+	}
+	manager.mu.RLock()
+	dial, revision, configured := manager.proxyDial, manager.proxyRevision, manager.proxyURL != ""
+	manager.mu.RUnlock()
+	if dial == nil {
+		if configured {
+			return nil, revision, errors.New("已配置的代理拨号器不可用")
+		}
+		var err error
+		dial, err = tcpDialContextForProxy("", 20*time.Second)
+		if err != nil {
+			return nil, revision, err
+		}
+	}
+	return dial, revision, nil
+}
+
+func (manager *SessionManager) imapProxyRevision() uint64 {
+	if manager == nil {
+		return 0
+	}
+	manager.mu.RLock()
+	defer manager.mu.RUnlock()
+	return manager.proxyRevision
+}
+
+func (manager *SessionManager) observeProxyChanges(observer func()) {
+	if manager == nil || observer == nil {
+		return
+	}
+	manager.mu.Lock()
+	manager.proxyObservers = append(manager.proxyObservers, observer)
+	manager.mu.Unlock()
 }
 
 func (manager *SessionManager) persistClientConfig(client *Client) {

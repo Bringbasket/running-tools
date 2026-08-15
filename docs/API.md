@@ -85,11 +85,11 @@ X-Mail-Account-ID: default
 | POST | `/api/mail/v1/aliases/batch-share-links` | 按创建时间从早到晚批量生成取件链接 |
 | POST | `/api/mail/v1/share-links/{id}/revoke` | 撤销分享链接 |
 | POST | `/api/mail/v1/share-links/clear-inactive` | 永久清理当前账号失效分享记录 |
-| GET | `/api/mail/v1/mail/messages?alias=...` | 读取指定隐藏邮箱的邮件缓存 |
+| GET | `/api/mail/v1/mail/messages?alias=...&limit=...` | 读取指定隐藏邮箱最新邮件，`limit` 最大为 100 |
 | GET/POST | `/api/mail/v1/mail/sync/{status,run}` | 查看状态或立即同步 IMAP |
 | GET/PUT | `/api/mail/v1/mail/settings` | 读取或保存 IMAP 设置，密码不回显 |
 | POST | `/api/mail/v1/mail/settings/test` | 使用当前表单测试只读 IMAP 连接 |
-| GET | `/api/mail/v1/mail/recent` | 最近 3 天聚合邮件 |
+| GET | `/api/mail/v1/mail/recent?limit=...` | 最近 3 天聚合邮件，`limit` 最大为 500 |
 | GET | `/api/mail/v1/mail/messages/{uid}?alias=...` | 单封邮件详情与代码识别 |
 | POST | `/api/mail/v1/mail/messages/{uid}/hide` | 从本地缓存隐藏邮件 |
 | POST | `/api/mail/v1/mail/messages/hide-batch` | 批量从本地缓存隐藏邮件 |
@@ -125,13 +125,16 @@ PostgreSQL 中对应的 Session/任务状态、邮件缓存、分享链接和使
 ```
 
 支持 `http`、`https` 和 `socks5`；提交空字符串清除代理。代理同时用于该母号的 Apple
-协议登录、Apple Account 管理接口和 iCloud Web HME 接口。列表和更新响应只返回
-`hasProxy`，绝不回显代理地址、用户名或密码。
+协议登录、Apple Account 管理接口、iCloud Web HME 接口和 IMAP 收件连接。配置代理后，
+连接失败会直接报错，不会回退到服务器公网出口；更换代理会立即关闭旧 IMAP/IDLE 连接并按
+新代理重连。列表和更新响应只返回 `hasProxy`，绝不回显代理地址、用户名或密码。
 
 前端保存代理前会先调用 `/accounts/{id}/proxy/test`，由服务端通过候选代理访问 Apple 官方站点。
 测试请求最长等待 15 秒，HTTP 200–399 判定为可用；测试不会写入 PostgreSQL，也不会替换当前
 账号的 HTTP Client。成功响应仅包含 `reachable`、`statusCode`、`latencyMs` 和目标主机名，
 不会回显代理地址或凭据。输入内容发生变化后，前端会立即作废上一次测试结果并重新禁用保存。
+这个测试只验证 Apple HTTPS 出口；代理是否允许 CONNECT 到 IMAP `993` 端口，应在“收件箱 →
+IMAP 设置”中执行“测试连接”，该测试与后台同步使用同一条母号代理链路。
 
 ### 邮件系统使用日志
 
@@ -314,10 +317,21 @@ App 专用密码，不能使用 Apple ID 登录密码。前端会按常见邮箱
 UID 游标增量同步；单批最多 200 封，积压批次会继续推进。Worker 优先使用 IMAP IDLE，
 服务器不支持时自动按配置轮询。同一母号复用已认证的 IMAP 连接完成增量同步和 IDLE，
 通过 `NOOP` 验证连接；配置变化、认证失败、连接错误或 Worker 停止时关闭并按需重连。
+IMAP、IDLE 和“测试连接”都复用该母号在账号管理中保存的独立代理；代理失败时禁止直连回退。
+首次同步或隐藏邮箱集合变化时，服务端先按最新 UID 向前分批读取收件人邮件头，找到受每邮箱
+100 封及账号 `cacheMax` 限制的候选 UID 后才读取完整正文，避免为历史无关邮件传输正文。
 只缓存属于当前启用隐藏邮箱白名单的邮件。账号、主机、端口
 或邮箱目录发生变化时会清空上一连接目标的本地邮件缓存，避免混用 UID 和邮件内容。
 
-列表接口只返回 160 字纯文本预览。单封详情按需返回完整纯文本和经过白名单清理的 `safeHtml`；脚本、表单、附件、远程图片、样式和非 HTTP(S) 链接均被移除。前端仅在 sandbox iframe 中显示该内容。
+每个隐藏邮箱只保留并返回按邮件时间排序的最新 100 封；这不是独立扩容额度，当前母号的所有
+隐藏邮箱仍共同受 `cacheMax` 账号级缓存总上限约束。最近邮件接口只聚合最近 3 天的可见邮件，
+单次最多返回 500 封。PostgreSQL 会在数据库中先按账号、邮箱、可见状态和时间筛选，再应用
+上述上限，不会为了返回 100/500 封而读取当前账号的全部正文。
+
+收件箱状态和长轮询只读取 `mailbox_sync_states` 中当前账号的单行同步状态，不加载邮件正文或
+隐藏记录；没有新邮件的同步只更新该状态行。列表接口只返回 160 字纯文本预览。单封详情按需
+返回完整纯文本和经过白名单清理的 `safeHtml`；脚本、表单、附件、远程图片、样式和非 HTTP(S)
+链接均被移除。前端仅在 sandbox iframe 中显示该内容。
 
 ## 旧版兼容行为
 

@@ -11,6 +11,8 @@ const mocks = vi.hoisted(() => ({
   mailboxSettings: vi.fn(),
   updateMailboxSettings: vi.fn(),
   testMailboxSettings: vi.fn(),
+  hideMailboxMessage: vi.fn(),
+  hideMailboxMessages: vi.fn(),
 }))
 
 vi.mock('../api', () => ({
@@ -22,6 +24,8 @@ vi.mock('../api', () => ({
     mailboxSettings: mocks.mailboxSettings,
     updateMailboxSettings: mocks.updateMailboxSettings,
     testMailboxSettings: mocks.testMailboxSettings,
+    hideMailboxMessage: mocks.hideMailboxMessage,
+    hideMailboxMessages: mocks.hideMailboxMessages,
   },
 }))
 
@@ -39,7 +43,7 @@ function messages(count: number) {
 }
 
 describe('收件箱页面', () => {
-  afterEach(() => { vi.restoreAllMocks(); toastState.items = [] })
+  afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); toastState.items = [] })
 
 	it('支持分页、筛选和按需加载安全 HTML 详情', async () => {
     mocks.mailboxRecent.mockResolvedValue({
@@ -64,13 +68,13 @@ describe('收件箱页面', () => {
     expect(wrapper.findAll('tbody tr')).toHaveLength(45)
     expect(wrapper.get('.pagination-actions strong').text()).toBe('第 1 / 1 页')
 
-    await wrapper.get('.search-field input').setValue('alias-45@icloud.com')
+    await wrapper.get('.search-field input').setValue('alias-45')
     expect(wrapper.findAll('tbody tr')).toHaveLength(1)
     expect(wrapper.get('.pagination-actions strong').text()).toBe('第 1 / 1 页')
 
-    await wrapper.get('.search-field input').setValue('')
     await wrapper.get('.message-summary').trigger('click')
     await flushPromises()
+    expect(mocks.mailboxMessage).toHaveBeenCalledWith('alias-45@icloud.com', 1)
     expect(document.body.textContent).toContain('原邮件')
     const htmlMode = Array.from(document.body.querySelectorAll<HTMLButtonElement>('.mode-switch button')).find((button) => button.textContent === '原邮件')
     expect(htmlMode).toBeTruthy()
@@ -97,7 +101,7 @@ describe('收件箱页面', () => {
 		wrapper.unmount()
 	})
 
-	it('从邮箱列表进入时只读取指定隐藏邮箱的邮件', async () => {
+  it('从邮箱列表进入时只读取指定隐藏邮箱的邮件', async () => {
     vi.clearAllMocks()
     const previousURL = window.location.href
     window.history.pushState({}, '', '/mail/mailbox?alias=target%40icloud.com')
@@ -118,6 +122,168 @@ describe('收件箱页面', () => {
 
     wrapper.unmount()
     window.history.replaceState({}, '', previousURL)
+  })
+
+  it('完整邮箱筛选优先操作精确别名且保留同封邮件的其他别名', async () => {
+    vi.clearAllMocks()
+    const previousURL = window.location.href
+    window.history.pushState({}, '', '/mail/mailbox?alias=target%40icloud.com')
+    mocks.mailboxMessages.mockResolvedValue({
+      configured: true,
+      alias: 'target@icloud.com',
+      messages: [{ ...messages(1)[0], aliases: ['xtarget@icloud.com', 'target@icloud.com'] }],
+      sync: { configured: true, enabled: true, workerRunning: true, syncMode: 'idle', revision: 8, lastSyncAt: 1786500000 },
+    })
+    mocks.mailboxWait.mockImplementation(() => new Promise(() => {}))
+    mocks.hideMailboxMessage.mockResolvedValue({})
+
+    const wrapper = mount(MailboxPage)
+    await flushPromises()
+    await wrapper.get('button[title="从本地列表隐藏"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.hideMailboxMessage).toHaveBeenCalledWith('target@icloud.com', 1, expect.objectContaining({ revision: 8 }))
+    expect(wrapper.text()).toContain('没有匹配的邮件')
+
+    wrapper.unmount()
+    window.history.replaceState({}, '', previousURL)
+  })
+
+  it('完整邮箱地址防抖查询服务端，清空后恢复最近邮件', async () => {
+    vi.useFakeTimers()
+    vi.clearAllMocks()
+    const previousURL = window.location.href
+    window.history.pushState({}, '', '/mail/mailbox')
+    mocks.mailboxRecent.mockResolvedValue({
+      days: 3,
+      messages: messages(3),
+      sync: { configured: true, enabled: true, workerRunning: true, syncMode: 'idle', revision: 9, lastSyncAt: 1786500000 },
+    })
+    mocks.mailboxMessages.mockResolvedValue({
+      configured: true,
+      alias: 'target@icloud.com',
+      messages: [{ ...messages(1)[0], aliases: ['target@icloud.com'] }],
+      sync: { configured: true, enabled: true, workerRunning: true, syncMode: 'idle', revision: 9, lastSyncAt: 1786500000 },
+    })
+    mocks.mailboxWait.mockImplementation(() => new Promise(() => {}))
+
+    const wrapper = mount(MailboxPage)
+    await flushPromises()
+    expect(mocks.mailboxRecent).toHaveBeenCalledWith(500)
+
+    const search = wrapper.get('.search-field input')
+    await search.setValue('target@icloud')
+    await vi.advanceTimersByTimeAsync(400)
+    expect(mocks.mailboxMessages).not.toHaveBeenCalled()
+
+    await search.setValue('target@icloud.com')
+    await vi.advanceTimersByTimeAsync(349)
+    expect(mocks.mailboxMessages).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1)
+    await flushPromises()
+    expect(mocks.mailboxMessages).toHaveBeenCalledTimes(1)
+    expect(mocks.mailboxMessages).toHaveBeenCalledWith('target@icloud.com', 100)
+    expect(wrapper.text()).toContain('target@icloud.com')
+
+    await search.setValue('target@icloud')
+    await flushPromises()
+    expect(mocks.mailboxRecent).toHaveBeenCalledTimes(2)
+    expect(mocks.mailboxRecent).toHaveBeenLastCalledWith(500)
+
+    await search.setValue('')
+
+    wrapper.unmount()
+    window.history.replaceState({}, '', previousURL)
+  })
+
+  it('卸载页面时取消尚未执行的邮箱查询', async () => {
+    vi.useFakeTimers()
+    vi.clearAllMocks()
+    const previousURL = window.location.href
+    window.history.pushState({}, '', '/mail/mailbox')
+    mocks.mailboxRecent.mockResolvedValue({
+      days: 3,
+      messages: messages(1),
+      sync: { configured: true, enabled: true, workerRunning: true, syncMode: 'idle', revision: 10, lastSyncAt: 1786500000 },
+    })
+    mocks.mailboxWait.mockImplementation(() => new Promise(() => {}))
+
+    const wrapper = mount(MailboxPage)
+    await flushPromises()
+    await wrapper.get('.search-field input').setValue('later@icloud.com')
+    wrapper.unmount()
+    await vi.advanceTimersByTimeAsync(400)
+
+    expect(mocks.mailboxMessages).not.toHaveBeenCalled()
+    window.history.replaceState({}, '', previousURL)
+  })
+
+  it('清空邮箱搜索后忽略尚未完成的旧查询结果', async () => {
+    vi.useFakeTimers()
+    vi.clearAllMocks()
+    const previousURL = window.location.href
+    window.history.pushState({}, '', '/mail/mailbox')
+    let resolveAlias!: (value: {
+      configured: boolean
+      alias: string
+      messages: ReturnType<typeof messages>
+      sync: { configured: boolean; enabled: boolean; workerRunning: boolean; syncMode: string; revision: number; lastSyncAt: number }
+    }) => void
+    mocks.mailboxRecent.mockResolvedValue({
+      days: 3,
+      messages: [{ ...messages(1)[0], aliases: ['recent@icloud.com'] }],
+      sync: { configured: true, enabled: true, workerRunning: true, syncMode: 'idle', revision: 11, lastSyncAt: 1786500000 },
+    })
+    mocks.mailboxMessages.mockImplementation(() => new Promise((resolve) => { resolveAlias = resolve }))
+    mocks.mailboxWait.mockImplementation(() => new Promise(() => {}))
+
+    const wrapper = mount(MailboxPage)
+    await flushPromises()
+    const search = wrapper.get('.search-field input')
+    await search.setValue('late@icloud.com')
+    await vi.advanceTimersByTimeAsync(350)
+    expect(mocks.mailboxMessages).toHaveBeenCalledTimes(1)
+
+    await search.setValue('')
+    await flushPromises()
+    expect(wrapper.text()).toContain('recent@icloud.com')
+    resolveAlias({
+      configured: true,
+      alias: 'late@icloud.com',
+      messages: [{ ...messages(1)[0], aliases: ['late@icloud.com'] }],
+      sync: { configured: true, enabled: true, workerRunning: true, syncMode: 'idle', revision: 11, lastSyncAt: 1786500000 },
+    })
+    await flushPromises()
+    expect(wrapper.text()).toContain('recent@icloud.com')
+    expect(wrapper.text()).not.toContain('late@icloud.com')
+
+    wrapper.unmount()
+    window.history.replaceState({}, '', previousURL)
+  })
+
+  it('切换母号后旧长轮询返回时不会启动重复监听', async () => {
+    vi.clearAllMocks()
+    const waitResolvers: Array<(value: { revision: number }) => void> = []
+    mocks.mailboxRecent.mockResolvedValue({
+      days: 3,
+      messages: messages(1),
+      sync: { configured: true, enabled: true, workerRunning: true, syncMode: 'idle', revision: 12, lastSyncAt: 1786500000 },
+    })
+    mocks.mailboxWait.mockImplementation(() => new Promise((resolve) => { waitResolvers.push(resolve) }))
+
+    const wrapper = mount(MailboxPage)
+    await flushPromises()
+    await vi.waitFor(() => expect(mocks.mailboxWait).toHaveBeenCalledTimes(1))
+
+    window.dispatchEvent(new Event('mail-account-change'))
+    await flushPromises()
+    expect(mocks.mailboxWait).toHaveBeenCalledTimes(2)
+
+    waitResolvers[0]({ revision: 13 })
+    await flushPromises()
+    expect(mocks.mailboxWait).toHaveBeenCalledTimes(2)
+
+    wrapper.unmount()
   })
 
   it('从前端保存 IMAP 设置且不回填已有密码', async () => {
@@ -186,5 +352,30 @@ describe('收件箱页面', () => {
     expect(host?.value).toBe('imap.mail.me.com')
     expect(dialog.textContent).toContain('不能使用 Apple ID 登录密码')
     wrapper.unmount()
+  })
+
+  it('hiding one alias removes the complete multi-alias message row', async () => {
+    vi.clearAllMocks()
+    const previousURL = window.location.href
+    window.history.pushState({}, '', '/mail/mailbox')
+    mocks.mailboxRecent.mockResolvedValue({
+      days: 3,
+      messages: [{ ...messages(1)[0], aliases: ['one@icloud.com', 'two@icloud.com'] }],
+      sync: { configured: true, enabled: true, workerRunning: true, syncMode: 'idle', revision: 8, lastSyncAt: 1786500000 },
+    })
+    mocks.mailboxWait.mockImplementation(() => new Promise(() => {}))
+    mocks.hideMailboxMessage.mockResolvedValue({})
+
+    const wrapper = mount(MailboxPage)
+    await flushPromises()
+    expect(wrapper.findAll('tbody tr')).toHaveLength(1)
+
+    await wrapper.get('tbody .icon-button').trigger('click')
+    await flushPromises()
+    expect(mocks.hideMailboxMessage).toHaveBeenCalledWith('one@icloud.com', 1, expect.objectContaining({ revision: 8 }))
+    expect(wrapper.find('tbody tr.empty-row').exists()).toBe(true)
+
+    wrapper.unmount()
+    window.history.replaceState({}, '', previousURL)
   })
 })

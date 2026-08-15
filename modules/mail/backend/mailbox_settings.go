@@ -9,7 +9,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/Bringbasket/running-tools/internal/platform/storage"
 	"github.com/emersion/go-imap/v2"
@@ -114,7 +113,7 @@ func (s *MailboxService) TestSettings(input MailboxSettingsInput) error {
 	if next.Username == "" || next.Password == "" {
 		return fmt.Errorf("%w: 请填写 IMAP 账号和应用专用密码", ErrInvalidMailboxSettings)
 	}
-	return testIMAPConnection(next)
+	return s.testIMAPConnection(next)
 }
 
 func (s *MailboxService) config() mailboxConfig {
@@ -265,8 +264,12 @@ func validateIMAPHost(host string) error {
 	return nil
 }
 
-func testIMAPConnection(cfg mailboxConfig) error {
-	client, err := imapclient.DialTLS(net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)), &imapclient.Options{Dialer: &net.Dialer{Timeout: 20 * time.Second}})
+func (s *MailboxService) testIMAPConnection(cfg mailboxConfig) error {
+	dialContext, _, err := s.session.imapProxySnapshot()
+	if err != nil {
+		return fmt.Errorf("IMAP 代理初始化失败: %w", err)
+	}
+	client, err := s.dialIMAP(net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)), &imapclient.Options{}, dialContext)
 	if err != nil {
 		return fmt.Errorf("IMAP TLS 连接失败: %w", err)
 	}

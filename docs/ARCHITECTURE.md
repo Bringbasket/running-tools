@@ -49,9 +49,11 @@ Worker、自动创建 Worker、批量队列、IMAP 服务和日志仓库；请�
 Apple Account、IMAP 和后台任务状态，不复制持久化健康状态。
 
 每个账号可以在 `mail_accounts.proxy_url` 保存独立代理。代理客户端归账号 Session 管理器所有，
-同时覆盖 Apple SRP 登录、Apple Account 管理态和 iCloud Web 请求；对外只暴露 `hasProxy`。
+同时覆盖 Apple SRP 登录、Apple Account 管理态、iCloud Web 请求以及 IMAP/IDLE 收件连接；
+配置代理后任何链路失败都不得静默回退到服务器直连，对外只暴露 `hasProxy`。
 iCloud Web 客户端会滚动合并响应 Cookie，并在账号内串行写回 `running_state`，避免并发响应覆盖。
-IMAP 服务在账号内复用一条已认证连接执行同步和 IDLE，目标或凭据变化后主动销毁旧连接。
+IMAP 服务在账号内复用一条已认证连接执行同步和 IDLE，目标、凭据或账号代理变化后主动销毁
+旧连接。账号管理的代理测试只验证 Apple HTTPS；IMAP 设置的连接测试才验证完整 `993` 链路。
 
 ## 前端模块约定
 
@@ -86,6 +88,14 @@ Vue 单文件组件的模板和 TypeScript 逻辑放在对应模块目录内。�
 `mailbox_hidden_messages`，分享链接和会话位于 `mail_share_links`、`mail_share_sessions`，
 使用日志位于 `activity_logs`。配置、Session 和任务当前状态按账号存入 `running_state` 的
 JSONB 单行，不会生成或追加生产 JSON 文件。
+
+收件箱采用双重保留边界：每个隐藏邮箱最多保留按时间排序的最新 100 封，同时每个母号的全部
+邮件仍受 IMAP 设置中的 `cacheMax` 总上限约束；不能把“每邮箱 100 封”理解为绕过账号总上限。
+Recent 聚合查询最多返回 500 封。PostgreSQL 列表查询必须在 SQL 层完成账号隔离、隐藏状态过滤、
+时间排序和 `LIMIT`，单封详情才读取完整正文。收件箱状态和长轮询只查询
+`mailbox_sync_states` 的账号单行，空同步只更新状态和 UID 游标，不得读取或重写整批邮件正文。
+首次回填采用“邮件头筛选 → 候选 UID 正文读取”两阶段流程，邮件头按 UID 从新到旧每批 200 封；
+候选集合达到每邮箱上限或账号 `cacheMax` 后停止，不允许为无关历史邮件批量下载完整正文。
 
 ```text
 PostgreSQL

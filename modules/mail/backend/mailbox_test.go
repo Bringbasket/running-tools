@@ -1,12 +1,23 @@
 package mail
 
 import (
+	"net/mail"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Bringbasket/running-tools/internal/platform/storage"
+	"github.com/emersion/go-imap/v2"
 )
+
+func TestTruncateTextPreservesUTF8Characters(t *testing.T) {
+	got := truncateText(strings.Repeat("验", 200), mailboxMessagePreviewSize)
+	if !utf8.ValidString(got) || len([]rune(got)) != mailboxMessagePreviewSize {
+		t.Fatalf("invalid Unicode preview: valid=%v runes=%d", utf8.ValidString(got), len([]rune(got)))
+	}
+}
 
 func TestParseMailMessageMatchesAliasAndExtractsCode(t *testing.T) {
 	raw := "From: Service <service@example.com>\r\nTo: demo@icloud.com\r\nSubject: Your verification code is 482931\r\nDate: Tue, 12 Aug 2026 10:00:00 +0800\r\nContent-Type: text/html; charset=utf-8\r\n\r\n<p>验证码：482931</p>"
@@ -83,6 +94,114 @@ func TestMergeMailMessagesIsIncrementalAndPrunesDisabledAliases(t *testing.T) {
 	merged := mergeMailMessages(existing, incoming, []string{"active@icloud.com"}, 5000)
 	if len(merged) != 2 || merged[0].UID != 12 || merged[1].UID != 10 || merged[1].Subject != "updated" {
 		t.Fatalf("unexpected incremental merge: %#v", merged)
+	}
+}
+
+func TestMergeMailMessagesKeepsNewestHundredPerAliasAndGlobalLimit(t *testing.T) {
+	messages := make([]MailMessage, 0, 240)
+	for uid := uint32(1); uid <= 130; uid++ {
+		messages = append(messages, MailMessage{UID: uid, Aliases: []string{"one@icloud.com"}, Date: float64(uid)})
+	}
+	for uid := uint32(131); uid <= 240; uid++ {
+		messages = append(messages, MailMessage{UID: uid, Aliases: []string{"two@icloud.com"}, Date: float64(uid)})
+	}
+
+	merged := mergeMailMessages(nil, messages, []string{"one@icloud.com", "two@icloud.com"}, 150)
+	if len(merged) != 150 {
+		t.Fatalf("global cache limit = %d, want 150", len(merged))
+	}
+	counts := map[string]int{}
+	for _, message := range merged {
+		for _, alias := range message.Aliases {
+			counts[alias]++
+		}
+	}
+	if counts["one@icloud.com"] != 50 || counts["two@icloud.com"] != 100 {
+		t.Fatalf("unexpected retained counts: %#v", counts)
+	}
+	if merged[0].UID != 240 || merged[len(merged)-1].UID != 81 {
+		t.Fatalf("retention did not keep newest messages: first=%d last=%d", merged[0].UID, merged[len(merged)-1].UID)
+	}
+}
+
+func TestInitialIMAPBatchRangesWalkNewestToOldest(t *testing.T) {
+	got := initialIMAPBatchRanges(450)
+	want := [][2]int{{250, 450}, {50, 250}, {0, 50}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("initial IMAP batch ranges = %#v, want %#v", got, want)
+	}
+}
+
+func TestInitialIMAPCandidatesPreferNewestAndRespectAliasQuotas(t *testing.T) {
+	counts := map[string]int{"one@icloud.com": mailboxAliasQueryMaximum - 1}
+	headers := []initialIMAPHeader{
+		{UID: 8, Aliases: []string{"one@icloud.com"}},
+		{UID: 10, Aliases: []string{"one@icloud.com", "two@icloud.com"}},
+		{UID: 9, Aliases: []string{"one@icloud.com"}},
+	}
+	got := appendInitialIMAPCandidateUIDs(nil, counts, headers, 10)
+	want := []imap.UID{10}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("initial candidates = %#v, want %#v", got, want)
+	}
+	if counts["one@icloud.com"] != mailboxAliasQueryMaximum || counts["two@icloud.com"] != 1 {
+		t.Fatalf("unexpected alias counts: %#v", counts)
+	}
+}
+
+func TestMatchingAllowedAliasesUsesDeliveryHeaders(t *testing.T) {
+	header := mail.Header{
+		"To":             {"Display <one@icloud.com>"},
+		"Delivered-To":   {"TWO@icloud.com"},
+		"X-Unrelated-To": {"ignored@icloud.com"},
+	}
+	got := matchingAllowedAliases(header, map[string]bool{"one@icloud.com": true, "two@icloud.com": true, "ignored@icloud.com": true})
+	want := []string{"one@icloud.com", "two@icloud.com"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("matching aliases = %#v, want %#v", got, want)
+	}
+}
+
+func TestInitialIMAPCountsCompleteRequiresEveryAliasQuota(t *testing.T) {
+	counts := map[string]int{
+		"one@icloud.com": mailboxAliasQueryMaximum,
+		"two@icloud.com": mailboxAliasQueryMaximum - 1,
+	}
+	if initialIMAPCountsComplete(counts, []string{"one@icloud.com", "two@icloud.com"}) {
+		t.Fatal("quota should remain incomplete while one alias is below the limit")
+	}
+	counts["two@icloud.com"]++
+	if !initialIMAPCountsComplete(counts, []string{"one@icloud.com", "two@icloud.com"}) {
+		t.Fatal("all aliases reached the quota")
+	}
+}
+
+func TestMergeMailMessagesCapsEveryAliasOnMultiAliasMessages(t *testing.T) {
+	messages := make([]MailMessage, 0, 120)
+	for uid := uint32(1); uid <= 120; uid++ {
+		messages = append(messages, MailMessage{
+			UID: uid, Aliases: []string{"one@icloud.com", "two@icloud.com"}, Date: float64(uid),
+		})
+	}
+	merged := mergeMailMessages(nil, messages, []string{"one@icloud.com", "two@icloud.com"}, 5000)
+	if len(merged) != mailboxAliasQueryMaximum {
+		t.Fatalf("retained %d multi-alias messages, want %d", len(merged), mailboxAliasQueryMaximum)
+	}
+	if merged[0].UID != 120 || merged[len(merged)-1].UID != 21 {
+		t.Fatalf("multi-alias retention did not keep newest messages: %#v", merged)
+	}
+}
+
+func TestPruneHiddenMessagesDropsEvictedAndDuplicateRows(t *testing.T) {
+	generation := "generation-1"
+	kept := messageKey(generation, "one@icloud.com", 10)
+	pruned := pruneHiddenMessages(
+		[]string{kept, messageKey(generation, "one@icloud.com", 9), kept, messageKey("old", "one@icloud.com", 10)},
+		generation,
+		[]MailMessage{{UID: 10, Aliases: []string{"one@icloud.com"}}},
+	)
+	if len(pruned) != 1 || pruned[0] != kept {
+		t.Fatalf("unexpected hidden rows after prune: %#v", pruned)
 	}
 }
 
@@ -225,7 +344,7 @@ func TestMailboxListsReturnPreviewButDetailKeepsFullText(t *testing.T) {
 		t.Fatal(err)
 	}
 	listed := service.Messages("one@icloud.com", 20)["messages"].([]MailMessage)
-	if len(listed) != 1 || len(listed[0].Text) > 160 {
+	if len(listed) != 1 || len([]rune(listed[0].Text)) > mailboxMessagePreviewSize {
 		t.Fatalf("list did not return a bounded preview: %#v", listed)
 	}
 	detail, ok := service.Message("one@icloud.com", 11)

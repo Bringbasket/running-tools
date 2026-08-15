@@ -246,9 +246,9 @@ onMounted(load)
     <template #actions><button type="button" class="button ghost" :disabled="creating" @click="closeCreate">取消</button><button form="create-account-form" class="button primary" :disabled="creating || !name.trim()"><LoaderCircle v-if="creating" :size="15" class="spin" /><Plus v-else :size="15" />创建并使用</button></template>
   </AppDialog>
 
-  <AppDialog id="account-proxy" :open="Boolean(proxyTarget)" title="账号代理" :subtitle="proxyTarget?.hasProxy ? '已配置代理；测试新地址成功后保存将直接覆盖' : '该代理将用于此母号的 Apple 登录和 iCloud 请求'" :busy="savingProxy || testingProxy" @close="closeProxy">
+  <AppDialog id="account-proxy" :open="Boolean(proxyTarget)" title="账号代理" :subtitle="proxyTarget?.hasProxy ? '已配置代理；测试新地址成功后保存将直接覆盖' : '该代理用于此母号的 Apple 请求和 IMAP 收件'" :busy="savingProxy || testingProxy" @close="closeProxy">
     <form id="account-proxy-form" @submit.prevent="saveProxy">
-      <label class="field"><span>代理地址</span><input v-model="proxyValue" type="password" autocomplete="new-password" placeholder="http://user:pass@host:port" autofocus /><small>支持 http、https、socks5；测试不会保存地址，连接成功后才能保存</small></label>
+      <label class="field"><span>代理地址</span><input v-model="proxyValue" type="password" autocomplete="new-password" placeholder="http://user:pass@host:port" autofocus /><small>支持 http、https、socks5；此处测试 Apple HTTPS，IMAP 993 请在“收件箱 → IMAP 设置”中测试</small></label>
       <p v-if="proxyTestResult" class="message success proxy-test-message">连接成功 · HTTP {{ proxyTestResult.statusCode }} · {{ proxyTestResult.latencyMs }} ms</p>
       <p v-if="proxyTestError" class="message error proxy-test-message">{{ proxyTestError }}</p>
       <p v-if="proxyError" class="message error">{{ proxyError }}</p>

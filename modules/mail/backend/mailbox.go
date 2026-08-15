@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -96,7 +97,7 @@ type MailboxService struct {
 	imapClient    *imapclient.Client
 	imapTarget    string
 	imapUpdates   chan struct{}
-	dialIMAP      func(string, *imapclient.Options) (*imapclient.Client, error)
+	dialIMAP      func(string, *imapclient.Options, proxyDialContext) (*imapclient.Client, error)
 }
 
 func (s *MailboxService) SetActivityLog(logs *activitylog.Store) { s.logs = logs }
@@ -124,9 +125,15 @@ func NewMailboxService(stateDir string, session *SessionManager) *MailboxService
 		wake:          make(chan struct{}, 1),
 		revisionEvent: make(chan struct{}),
 		accountID:     defaultMailAccountID,
-		dialIMAP:      imapclient.DialTLS,
+		dialIMAP:      dialIMAPTLS,
 	}
 	service.repository = &jsonMailboxRepository{path: service.path}
+	if session != nil {
+		session.observeProxyChanges(func() {
+			service.closeIMAPConnection()
+			service.RequestSync()
+		})
+	}
 	return service
 }
 
@@ -327,6 +334,38 @@ func (s *MailboxService) loadLocked() mailboxCache {
 	return cache
 }
 
+func (s *MailboxService) loadStateLocked() mailboxCache {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	state, _, err := s.repository.LoadState(ctx)
+	if err != nil {
+		s.lastLoadErr = err
+		if s.cacheLoaded {
+			return mailboxCache{
+				Status:         s.lastCache.Status,
+				HighestUID:     s.lastCache.HighestUID,
+				AllowedAliases: append([]string(nil), s.lastCache.AllowedAliases...),
+			}
+		}
+		return normalizedMailboxCache(mailboxCache{Status: MailboxStatus{LastError: "邮箱存储读取失败: " + safeErrorText(err)}})
+	}
+	s.lastLoadErr = nil
+	if s.cacheLoaded {
+		if s.lastCache.Status.MailboxGeneration != state.Status.MailboxGeneration {
+			// Another instance may have rotated UIDVALIDITY or cleared the
+			// mailbox. Do not let rows from the previous generation participate
+			// in legacy UID recovery or a later merge.
+			s.lastCache = state
+			s.cacheLoaded = false
+		} else {
+			s.lastCache.Status = state.Status
+			s.lastCache.HighestUID = state.HighestUID
+			s.lastCache.AllowedAliases = append([]string(nil), state.AllowedAliases...)
+		}
+	}
+	return state
+}
+
 func (s *MailboxService) saveLocked(cache mailboxCache) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -337,10 +376,25 @@ func (s *MailboxService) saveLocked(cache mailboxCache) error {
 	s.cacheLoaded = true
 	return nil
 }
+
+func (s *MailboxService) saveStateLocked(cache mailboxCache) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := s.repository.SaveState(ctx, cache); err != nil {
+		return err
+	}
+	if s.cacheLoaded {
+		s.lastCache.Status = cache.Status
+		s.lastCache.HighestUID = cache.HighestUID
+		s.lastCache.AllowedAliases = append([]string(nil), cache.AllowedAliases...)
+	}
+	return nil
+}
+
 func (s *MailboxService) Status() MailboxStatus {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	cache := s.loadLocked()
+	cache := s.loadStateLocked()
 	cfg := s.config()
 	cache.Status.Configured = cfg.Username != "" && cfg.Password != ""
 	cache.Status.Enabled = cfg.Enabled
@@ -364,35 +418,17 @@ func (s *MailboxService) MessagesDetailed(alias string, limit int) map[string]an
 func (s *MailboxService) messages(alias string, limit int, detailed bool) map[string]any {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	cache := s.loadLocked()
+	cache := s.loadStateLocked()
 	cfg := s.config()
 	cache.Status = s.statusWithConfig(cache.Status, cfg)
 	alias = strings.ToLower(strings.TrimSpace(alias))
-	if limit < 1 {
-		limit = 10
-	}
-	if limit > 100 {
-		limit = 100
-	}
-	hidden := hiddenSet(cache.Hidden)
-	matches := []MailMessage{}
-	for _, m := range cache.Messages {
-		if hidden[messageKey(cache.Status.MailboxGeneration, alias, m.UID)] {
-			continue
-		}
-		for _, address := range m.Aliases {
-			if address == alias {
-				if !detailed {
-					m = summarizeMailMessage(m)
-				}
-				normalizeMailMessageLists(&m)
-				matches = append(matches, m)
-				break
-			}
-		}
-		if len(matches) >= limit {
-			break
-		}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	matches, err := s.repository.ListAliasMessages(ctx, cache.Status.MailboxGeneration, alias, limit, detailed)
+	if err != nil {
+		s.lastLoadErr = err
+		cache.Status.LastError = "邮箱存储读取失败: " + safeErrorText(err)
+		matches = []MailMessage{}
 	}
 	return map[string]any{"configured": cfg.Username != "" && cfg.Password != "", "alias": alias, "messages": matches, "sync": cache.Status}
 }
@@ -400,41 +436,22 @@ func (s *MailboxService) messages(alias string, limit int, detailed bool) map[st
 func (s *MailboxService) Recent(limit int) map[string]any {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	cache := s.loadLocked()
+	cache := s.loadStateLocked()
 	cache.Status = s.statusWithConfig(cache.Status, s.config())
-	if limit < 1 {
-		limit = 200
-	}
-	if limit > 500 {
-		limit = 500
-	}
-	hidden := hiddenSet(cache.Hidden)
-	items := make([]MailMessage, 0, min(limit, len(cache.Messages)))
 	cutoff := float64(time.Now().Add(-72 * time.Hour).Unix())
-	for _, message := range cache.Messages {
-		if message.Date < cutoff {
-			continue
-		}
-		visible := false
-		for _, alias := range message.Aliases {
-			if !hidden[messageKey(cache.Status.MailboxGeneration, alias, message.UID)] {
-				visible = true
-				break
-			}
-		}
-		if visible {
-			normalizeMailMessageLists(&message)
-			items = append(items, summarizeMailMessage(message))
-		}
-		if len(items) >= limit {
-			break
-		}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	items, err := s.repository.ListRecentMessages(ctx, cache.Status.MailboxGeneration, cutoff, limit)
+	if err != nil {
+		s.lastLoadErr = err
+		cache.Status.LastError = "邮箱存储读取失败: " + safeErrorText(err)
+		items = []MailMessage{}
 	}
 	return map[string]any{"days": 3, "messages": items, "sync": cache.Status}
 }
 
 func summarizeMailMessage(message MailMessage) MailMessage {
-	message.Text = truncateText(message.Text, 160)
+	message.Text = truncateText(message.Text, mailboxMessagePreviewSize)
 	message.SafeHTML = ""
 	return message
 }
@@ -457,23 +474,16 @@ func normalizeMailMessageLists(message *MailMessage) {
 func (s *MailboxService) Message(alias string, uid uint32) (MailMessage, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	cache := s.loadLocked()
+	cache := s.loadStateLocked()
 	alias = strings.ToLower(strings.TrimSpace(alias))
-	if hiddenSet(cache.Hidden)[messageKey(cache.Status.MailboxGeneration, alias, uid)] {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	message, ok, err := s.repository.GetMessage(ctx, cache.Status.MailboxGeneration, alias, uid)
+	if err != nil {
+		s.lastLoadErr = err
 		return MailMessage{}, false
 	}
-	for _, message := range cache.Messages {
-		if message.UID != uid {
-			continue
-		}
-		for _, address := range message.Aliases {
-			if address == alias {
-				normalizeMailMessageLists(&message)
-				return message, true
-			}
-		}
-	}
-	return MailMessage{}, false
+	return message, ok
 }
 
 func (s *MailboxService) Hide(alias string, uid uint32, uidValidity uint32, generation string) (map[string]any, error) {
@@ -595,7 +605,7 @@ func (s *MailboxService) HideBatch(items []struct {
 
 func (s *MailboxService) WaitForRevision(revision int64, timeout time.Duration) MailboxStatus {
 	s.mu.Lock()
-	cache := s.loadLocked()
+	cache := s.loadStateLocked()
 	if cache.Status.Revision != revision {
 		s.mu.Unlock()
 		return s.Status()
@@ -635,7 +645,7 @@ func (s *MailboxService) RunSync(aliases []string) (MailboxStatus, error) {
 
 	s.mu.Lock()
 	cfg := s.config()
-	cache := s.loadLocked()
+	cache := s.loadStateLocked()
 	if s.lastLoadErr != nil {
 		err := s.lastLoadErr
 		s.mu.Unlock()
@@ -650,11 +660,25 @@ func (s *MailboxService) RunSync(aliases []string) (MailboxStatus, error) {
 	previousUIDValidity := cache.Status.UIDValidity
 	afterUID := cache.HighestUID
 	normalizedAliases := normalizeAliases(aliases)
-	if !reflect.DeepEqual(cache.AllowedAliases, normalizedAliases) {
+	aliasesChanged := !reflect.DeepEqual(cache.AllowedAliases, normalizedAliases)
+	if aliasesChanged {
 		afterUID = 0
-	}
-	if afterUID == 0 {
-		for _, message := range cache.Messages {
+	} else if afterUID == 0 && cache.Status.MailboxGeneration != "" {
+		// Old cache rows may predate the persisted highest_uid field. This is
+		// the only pre-fetch path that needs full message bodies. Reuse the
+		// process cache so a legitimately empty mailbox does not reload the
+		// empty message table on every poll.
+		legacyCache := s.lastCache
+		if !s.cacheLoaded {
+			legacyCache = s.loadLocked()
+			if s.lastLoadErr != nil {
+				err := s.lastLoadErr
+				s.mu.Unlock()
+				return MailboxStatus{LastError: "邮箱存储读取失败: " + safeErrorText(err)}, err
+			}
+		}
+		previousUIDValidity = legacyCache.Status.UIDValidity
+		for _, message := range legacyCache.Messages {
 			if message.UID > afterUID {
 				afterUID = message.UID
 			}
@@ -674,34 +698,67 @@ func (s *MailboxService) RunSync(aliases []string) (MailboxStatus, error) {
 	now := unixNow()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	cache = s.loadLocked()
+	cache = s.loadStateLocked()
+	if s.lastLoadErr != nil {
+		storageErr := s.lastLoadErr
+		return MailboxStatus{LastError: "邮箱存储读取失败: " + safeErrorText(storageErr)}, storageErr
+	}
 	cache.Status = s.statusWithConfig(cache.Status, cfg)
 	cache.Status.LastSyncAt = &now
 	if err != nil {
 		cache.Status.LastError = safeErrorText(err)
-		_ = s.saveLocked(cache)
+		_ = s.saveStateLocked(cache)
 		return cache.Status, err
 	}
 	generation := mailboxGeneration(cfg, uidValidity)
 	generationChanged := cache.Status.MailboxGeneration != "" && cache.Status.MailboxGeneration != generation
+	if len(messages) == 0 && !aliasesChanged && !generationChanged {
+		cache.HighestUID = highestUID
+		cache.AllowedAliases = normalizedAliases
+		cache.Status.UIDValidity = uidValidity
+		cache.Status.MailboxGeneration = generation
+		cache.Status.LastError = ""
+		if err := s.saveStateLocked(cache); err != nil {
+			return cache.Status, err
+		}
+		return cache.Status, nil
+	}
+
+	cache = s.loadLocked()
+	if s.lastLoadErr != nil {
+		storageErr := s.lastLoadErr
+		return MailboxStatus{LastError: "邮箱存储读取失败: " + safeErrorText(storageErr)}, storageErr
+	}
+	cache.Status = s.statusWithConfig(cache.Status, cfg)
+	cache.Status.LastSyncAt = &now
+	generationChanged = cache.Status.MailboxGeneration != "" && cache.Status.MailboxGeneration != generation
 	if generationChanged {
 		cache.Messages = nil
 		cache.Hidden = nil
 		cache.HighestUID = 0
 	}
 	before := cloneMailMessages(cache.Messages)
+	beforeHidden := append([]string(nil), cache.Hidden...)
 	cache.Messages = mergeMailMessages(cache.Messages, messages, aliases, cfg.CacheMax)
+	cache.Hidden = pruneHiddenMessages(cache.Hidden, generation, cache.Messages)
 	cache.HighestUID = highestUID
 	cache.AllowedAliases = normalizedAliases
 	cache.Status.UIDValidity = uidValidity
 	cache.Status.MailboxGeneration = generation
 	cache.Status.LastError = ""
 	changed := generationChanged || !reflect.DeepEqual(before, cache.Messages)
+	cacheChanged := changed || !reflect.DeepEqual(beforeHidden, cache.Hidden)
 	if changed {
 		cache.Status.Revision++
 	}
-	if err := s.saveLocked(cache); err != nil {
-		return cache.Status, err
+	var saveErr error
+	if cacheChanged {
+		saveErr = s.saveLocked(cache)
+	} else {
+		saveErr = s.saveStateLocked(cache)
+	}
+	if saveErr != nil {
+		return cache.Status, saveErr
 	}
 	if changed {
 		s.notifyRevisionLocked()
@@ -738,34 +795,194 @@ func fetchIMAPWithClient(client *imapclient.Client, cfg mailboxConfig, aliases [
 		return nil, 0, afterUID, fmt.Errorf("IMAP 搜索失败: %w", err)
 	}
 	uids := search.AllUIDs()
+	sort.Slice(uids, func(i, j int) bool { return uids[i] < uids[j] })
 	highestUID := afterUID
 	for _, uid := range uids {
 		if uint32(uid) > highestUID {
 			highestUID = uint32(uid)
 		}
 	}
-	if len(uids) > 200 {
-		if afterUID == 0 {
-			uids = uids[len(uids)-200:]
-		} else {
-			uids = uids[:200]
-			highestUID = uint32(uids[len(uids)-1])
-		}
-	}
 	if len(uids) == 0 {
 		return []MailMessage{}, selected.UIDValidity, highestUID, nil
+	}
+	if afterUID == 0 {
+		// A first sync (or an alias/UIDVALIDITY change) must walk backwards in
+		// bounded fetches. Fetching only the newest 200 UIDs while advancing the
+		// cursor to the mailbox maximum would permanently skip older messages
+		// belonging to a newly enabled alias.
+		out, err := fetchInitialIMAPMessages(client, cfg, aliases, uids)
+		if err != nil {
+			return nil, 0, afterUID, err
+		}
+		return out, selected.UIDValidity, highestUID, nil
+	}
+	if len(uids) > imapFetchBatchSize {
+		uids = uids[:imapFetchBatchSize]
+		highestUID = uint32(uids[len(uids)-1])
+	}
+	out, err := fetchIMAPUIDBatch(client, uids, aliases)
+	if err != nil {
+		return nil, 0, afterUID, err
+	}
+	return out, selected.UIDValidity, highestUID, nil
+}
+
+const imapFetchBatchSize = 200
+
+func fetchInitialIMAPMessages(client *imapclient.Client, cfg mailboxConfig, aliases []string, uids []imap.UID) ([]MailMessage, error) {
+	normalizedAliases := normalizeAliases(aliases)
+	if len(normalizedAliases) == 0 {
+		return []MailMessage{}, nil
+	}
+	maximum := cfg.CacheMax
+	if maximum < 1 {
+		maximum = mailboxRecentQueryMaximum * 10
+	}
+	allowed := make(map[string]bool, len(normalizedAliases))
+	for _, alias := range normalizedAliases {
+		allowed[alias] = true
+	}
+	counts := make(map[string]int, len(normalizedAliases))
+	selectedUIDs := make([]imap.UID, 0, min(maximum, len(uids)))
+	for _, bounds := range initialIMAPBatchRanges(len(uids)) {
+		headers, err := fetchIMAPAliasHeaders(client, uids[bounds[0]:bounds[1]], allowed)
+		if err != nil {
+			return nil, err
+		}
+		selectedUIDs = appendInitialIMAPCandidateUIDs(selectedUIDs, counts, headers, maximum)
+		if len(selectedUIDs) >= maximum || initialIMAPCountsComplete(counts, normalizedAliases) {
+			break
+		}
+	}
+
+	// The backwards scan reads only recipient headers. Download full message
+	// bodies after the bounded candidate set is known, so a busy mother account
+	// does not transfer every unrelated historical message during first sync.
+	messages := make([]MailMessage, 0, len(selectedUIDs))
+	for start := 0; start < len(selectedUIDs); start += imapFetchBatchSize {
+		end := min(start+imapFetchBatchSize, len(selectedUIDs))
+		batch, err := fetchIMAPUIDBatch(client, selectedUIDs[start:end], normalizedAliases)
+		if err != nil {
+			return nil, err
+		}
+		messages = append(messages, batch...)
+	}
+	sort.Slice(messages, func(i, j int) bool {
+		if messages[i].Date == messages[j].Date {
+			return messages[i].UID > messages[j].UID
+		}
+		return messages[i].Date > messages[j].Date
+	})
+	return messages, nil
+}
+
+func initialIMAPBatchRanges(total int) [][2]int {
+	if total <= 0 {
+		return nil
+	}
+	ranges := make([][2]int, 0, (total+imapFetchBatchSize-1)/imapFetchBatchSize)
+	for end := total; end > 0; {
+		start := end - imapFetchBatchSize
+		if start < 0 {
+			start = 0
+		}
+		ranges = append(ranges, [2]int{start, end})
+		end = start
+	}
+	return ranges
+}
+
+type initialIMAPHeader struct {
+	UID     imap.UID
+	Aliases []string
+}
+
+func fetchIMAPAliasHeaders(client *imapclient.Client, uids []imap.UID, allowed map[string]bool) ([]initialIMAPHeader, error) {
+	if len(uids) == 0 {
+		return []initialIMAPHeader{}, nil
+	}
+	section := &imap.FetchItemBodySection{
+		Specifier:    imap.PartSpecifierHeader,
+		HeaderFields: []string{"To", "Cc", "Delivered-To", "X-Original-To", "X-Forwarded-To"},
+		Peek:         true,
+	}
+	buffers, err := client.Fetch(imap.UIDSetNum(uids...), &imap.FetchOptions{
+		UID: true, BodySection: []*imap.FetchItemBodySection{section},
+	}).Collect()
+	if err != nil {
+		return nil, fmt.Errorf("IMAP 邮件头读取失败: %w", err)
+	}
+	headers := make([]initialIMAPHeader, 0, len(buffers))
+	for _, buffer := range buffers {
+		message, readErr := mail.ReadMessage(bytes.NewReader(buffer.FindBodySection(section)))
+		if readErr != nil {
+			continue
+		}
+		aliases := matchingAllowedAliases(message.Header, allowed)
+		if len(aliases) > 0 {
+			headers = append(headers, initialIMAPHeader{UID: buffer.UID, Aliases: aliases})
+		}
+	}
+	return headers, nil
+}
+
+func appendInitialIMAPCandidateUIDs(selected []imap.UID, counts map[string]int, headers []initialIMAPHeader, maximum int) []imap.UID {
+	if maximum < 1 || len(selected) >= maximum {
+		return selected
+	}
+	sort.Slice(headers, func(i, j int) bool { return headers[i].UID > headers[j].UID })
+	for _, header := range headers {
+		needed := false
+		seen := make(map[string]struct{}, len(header.Aliases))
+		for _, alias := range header.Aliases {
+			alias = strings.ToLower(strings.TrimSpace(alias))
+			if alias == "" || counts[alias] >= mailboxAliasQueryMaximum {
+				continue
+			}
+			if _, duplicate := seen[alias]; duplicate {
+				continue
+			}
+			seen[alias] = struct{}{}
+			needed = true
+		}
+		if !needed {
+			continue
+		}
+		selected = append(selected, header.UID)
+		for alias := range seen {
+			counts[alias]++
+		}
+		if len(selected) >= maximum {
+			break
+		}
+	}
+	return selected
+}
+
+func initialIMAPCountsComplete(counts map[string]int, aliases []string) bool {
+	for _, alias := range aliases {
+		if counts[alias] < mailboxAliasQueryMaximum {
+			return false
+		}
+	}
+	return true
+}
+
+func fetchIMAPUIDBatch(client *imapclient.Client, uids []imap.UID, aliases []string) ([]MailMessage, error) {
+	if len(uids) == 0 {
+		return []MailMessage{}, nil
 	}
 	set := imap.UIDSetNum(uids...)
 	section := &imap.FetchItemBodySection{Peek: true, Partial: &imap.SectionPartial{Size: 2 << 20}}
 	buffers, err := client.Fetch(set, &imap.FetchOptions{UID: true, Envelope: true, InternalDate: true, BodySection: []*imap.FetchItemBodySection{section}}).Collect()
 	if err != nil {
-		return nil, 0, afterUID, fmt.Errorf("IMAP 邮件读取失败: %w", err)
+		return nil, fmt.Errorf("IMAP 邮件读取失败: %w", err)
 	}
-	allowed := map[string]bool{}
-	for _, a := range aliases {
-		allowed[strings.ToLower(strings.TrimSpace(a))] = true
+	allowed := make(map[string]bool, len(aliases))
+	for _, alias := range aliases {
+		allowed[strings.ToLower(strings.TrimSpace(alias))] = true
 	}
-	out := []MailMessage{}
+	out := make([]MailMessage, 0, len(buffers))
 	for _, buffer := range buffers {
 		raw := buffer.FindBodySection(section)
 		message, parseErr := parseMailMessage(uint32(buffer.UID), raw, allowed)
@@ -773,8 +990,13 @@ func fetchIMAPWithClient(client *imapclient.Client, cfg mailboxConfig, aliases [
 			out = append(out, message)
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Date > out[j].Date })
-	return out, selected.UIDValidity, highestUID, nil
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Date == out[j].Date {
+			return out[i].UID > out[j].UID
+		}
+		return out[i].Date > out[j].Date
+	})
+	return out, nil
 }
 
 func mergeMailMessages(existing, incoming []MailMessage, aliases []string, maximum int) []MailMessage {
@@ -809,10 +1031,58 @@ func mergeMailMessages(existing, incoming []MailMessage, aliases []string, maxim
 		}
 		return out[i].Date > out[j].Date
 	})
+	out = retainNewestMessagesPerAlias(out, mailboxAliasQueryMaximum)
 	if maximum > 0 && len(out) > maximum {
 		out = out[:maximum]
 	}
 	return out
+}
+
+func retainNewestMessagesPerAlias(messages []MailMessage, maximum int) []MailMessage {
+	if maximum < 1 {
+		return []MailMessage{}
+	}
+	counts := make(map[string]int)
+	retained := make([]MailMessage, 0, len(messages))
+	for _, message := range messages {
+		aliases := make([]string, 0, len(message.Aliases))
+		seen := make(map[string]bool, len(message.Aliases))
+		for _, alias := range message.Aliases {
+			alias = strings.ToLower(strings.TrimSpace(alias))
+			if alias == "" || seen[alias] || counts[alias] >= maximum {
+				continue
+			}
+			seen[alias] = true
+			counts[alias]++
+			aliases = append(aliases, alias)
+		}
+		if len(aliases) == 0 {
+			continue
+		}
+		message.Aliases = aliases
+		retained = append(retained, message)
+	}
+	return retained
+}
+
+func pruneHiddenMessages(hidden []string, generation string, messages []MailMessage) []string {
+	valid := make(map[string]bool)
+	for _, message := range messages {
+		for _, alias := range message.Aliases {
+			valid[messageKey(generation, alias, message.UID)] = true
+		}
+	}
+	seen := make(map[string]bool, len(hidden))
+	pruned := make([]string, 0, len(hidden))
+	for _, key := range hidden {
+		if !valid[key] || seen[key] {
+			continue
+		}
+		seen[key] = true
+		pruned = append(pruned, key)
+	}
+	sort.Strings(pruned)
+	return pruned
 }
 
 func normalizeAliases(aliases []string) []string {
@@ -893,7 +1163,11 @@ drained:
 }
 
 func (s *MailboxService) ensureIMAPConnectionLocked(cfg mailboxConfig) (*imapclient.Client, error) {
-	target := imapConnectionTarget(cfg)
+	dialContext, proxyRevision, err := s.session.imapProxySnapshot()
+	if err != nil {
+		return nil, fmt.Errorf("IMAP 代理初始化失败: %w", err)
+	}
+	target := imapConnectionTarget(cfg, proxyRevision)
 	s.imapMu.Lock()
 	current, currentTarget := s.imapClient, s.imapTarget
 	s.imapMu.Unlock()
@@ -907,7 +1181,6 @@ func (s *MailboxService) ensureIMAPConnectionLocked(cfg mailboxConfig) (*imapcli
 	}
 	updates := make(chan struct{}, 1)
 	options := &imapclient.Options{
-		Dialer: &net.Dialer{Timeout: 20 * time.Second},
 		UnilateralDataHandler: &imapclient.UnilateralDataHandler{
 			Mailbox: func(data *imapclient.UnilateralDataMailbox) {
 				if data.NumMessages != nil {
@@ -919,7 +1192,7 @@ func (s *MailboxService) ensureIMAPConnectionLocked(cfg mailboxConfig) (*imapcli
 			},
 		},
 	}
-	client, err := s.dialIMAP(net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)), options)
+	client, err := s.dialIMAP(net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port)), options, dialContext)
 	if err != nil {
 		return nil, fmt.Errorf("IMAP TLS 连接失败: %w", err)
 	}
@@ -927,10 +1200,64 @@ func (s *MailboxService) ensureIMAPConnectionLocked(cfg mailboxConfig) (*imapcli
 		_ = client.Close()
 		return nil, imapLoginError(cfg, err)
 	}
+	if s.session.imapProxyRevision() != proxyRevision {
+		_ = client.Close()
+		return nil, errors.New("IMAP 代理已变更，请重试")
+	}
 	s.imapMu.Lock()
 	s.imapClient, s.imapTarget, s.imapUpdates = client, target, updates
 	s.imapMu.Unlock()
+	if s.session.imapProxyRevision() != proxyRevision {
+		s.closeIMAPConnectionLocked()
+		return nil, errors.New("IMAP 代理已变更，请重试")
+	}
 	return client, nil
+}
+
+func dialIMAPTLS(address string, options *imapclient.Options, dialContext proxyDialContext) (*imapclient.Client, error) {
+	if options == nil {
+		options = &imapclient.Options{}
+	}
+	if dialContext == nil {
+		return nil, errors.New("IMAP 拨号器不可用")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	conn, err := dialContext(ctx, "tcp", address)
+	if err != nil {
+		return nil, err
+	}
+	closeOnError := true
+	defer func() {
+		if closeOnError {
+			_ = conn.Close()
+		}
+	}()
+
+	var tlsConfig *tls.Config
+	if options.TLSConfig != nil {
+		tlsConfig = options.TLSConfig.Clone()
+	} else {
+		tlsConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	}
+	if tlsConfig.ServerName == "" {
+		host, _, splitErr := net.SplitHostPort(address)
+		if splitErr != nil {
+			return nil, splitErr
+		}
+		tlsConfig.ServerName = host
+	}
+	if tlsConfig.NextProtos == nil {
+		tlsConfig.NextProtos = []string{"imap"}
+	}
+	tlsConn := tls.Client(conn, tlsConfig)
+	if err := tlsConn.HandshakeContext(ctx); err != nil {
+		return nil, err
+	}
+	clientOptions := *options
+	clientOptions.TLSConfig = tlsConfig
+	closeOnError = false
+	return imapclient.New(tlsConn, &clientOptions), nil
 }
 
 func (s *MailboxService) closeIMAPConnection() {
@@ -947,8 +1274,8 @@ func (s *MailboxService) closeIMAPConnectionLocked() {
 	}
 }
 
-func imapConnectionTarget(cfg mailboxConfig) string {
-	sum := sha256.Sum256([]byte(strings.ToLower(cfg.Host) + "\x00" + strconv.Itoa(cfg.Port) + "\x00" + cfg.Username + "\x00" + cfg.Password + "\x00" + cfg.Mailbox))
+func imapConnectionTarget(cfg mailboxConfig, proxyRevision uint64) string {
+	sum := sha256.Sum256([]byte(strings.ToLower(cfg.Host) + "\x00" + strconv.Itoa(cfg.Port) + "\x00" + cfg.Username + "\x00" + cfg.Password + "\x00" + cfg.Mailbox + "\x00" + strconv.FormatUint(proxyRevision, 10)))
 	return fmt.Sprintf("%x", sum[:])
 }
 
@@ -976,8 +1303,23 @@ func parseMailMessage(uid uint32, raw []byte, allowed map[string]bool) (MailMess
 	if err != nil {
 		return MailMessage{}, err
 	}
-	addresses := map[string]bool{}
-	for key, values := range message.Header {
+	aliases := matchingAllowedAliases(message.Header, allowed)
+	body, safeHTML, err := readMailBody(message.Header, message.Body, 0)
+	if err != nil {
+		return MailMessage{}, err
+	}
+	date := time.Now()
+	if parsed, err := message.Header.Date(); err == nil {
+		date = parsed
+	}
+	from := decodeHeader(message.Header.Get("From"))
+	subject := decodeHeader(message.Header.Get("Subject"))
+	return MailMessage{UID: uid, Aliases: aliases, From: from, Subject: subject, Date: float64(date.UnixNano()) / float64(time.Second), Text: truncateText(body, 200000), SafeHTML: truncateText(safeHTML, 200000), Codes: extractCodes(subject + "\n" + body), PartnerCodes: extractPartnerCodes(body)}, nil
+}
+
+func matchingAllowedAliases(header mail.Header, allowed map[string]bool) []string {
+	addresses := make(map[string]bool)
+	for key, values := range header {
 		lower := strings.ToLower(key)
 		if lower == "to" || lower == "cc" || lower == "delivered-to" || lower == "x-original-to" || lower == "x-forwarded-to" {
 			for _, value := range values {
@@ -990,22 +1332,12 @@ func parseMailMessage(uid uint32, raw []byte, allowed map[string]bool) (MailMess
 			}
 		}
 	}
-	body, safeHTML, err := readMailBody(message.Header, message.Body, 0)
-	if err != nil {
-		return MailMessage{}, err
-	}
 	aliases := make([]string, 0, len(addresses))
 	for address := range addresses {
 		aliases = append(aliases, address)
 	}
 	sort.Strings(aliases)
-	date := time.Now()
-	if parsed, err := message.Header.Date(); err == nil {
-		date = parsed
-	}
-	from := decodeHeader(message.Header.Get("From"))
-	subject := decodeHeader(message.Header.Get("Subject"))
-	return MailMessage{UID: uid, Aliases: aliases, From: from, Subject: subject, Date: float64(date.UnixNano()) / float64(time.Second), Text: truncateText(body, 200000), SafeHTML: truncateText(safeHTML, 200000), Codes: extractCodes(subject + "\n" + body), PartnerCodes: extractPartnerCodes(body)}, nil
+	return aliases
 }
 func readMailBody(header mail.Header, body io.Reader, depth int) (string, string, error) {
 	if depth > 8 {
@@ -1285,8 +1617,12 @@ func extractPartnerCodes(value string) []string {
 }
 func truncateText(value string, max int) string {
 	value = strings.TrimSpace(value)
-	if len(value) > max {
-		return value[:max]
+	if max < 1 {
+		return ""
+	}
+	runes := []rune(value)
+	if len(runes) > max {
+		return string(runes[:max])
 	}
 	return value
 }

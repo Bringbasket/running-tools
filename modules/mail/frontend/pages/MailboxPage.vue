@@ -11,9 +11,11 @@ import type { MailboxSettings, MailboxSettingsInput, MailboxStatus, MailMessage 
 const status = ref<MailboxStatus | null>(null)
 const loading = ref(false)
 const error = ref('')
+const completeEmailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+const aliasSearchDebounceMs = 350
 const initialAlias = new URLSearchParams(window.location.search).get('alias')?.trim().toLowerCase() || ''
 const alias = ref(initialAlias)
-const scopedAlias = ref(initialAlias)
+const scopedAlias = ref(completeEmailPattern.test(initialAlias) ? initialAlias : '')
 const messages = ref<MailMessage[]>([])
 const selected = ref(new Set<string>())
 const detail = ref<MailMessage | null>(null)
@@ -35,6 +37,9 @@ const settingsForm = ref<MailboxSettingsInput>({
   enabled: false, pollSeconds: 120, lookbackDays: 90, cacheMax: 5000,
 })
 let stopped = false
+let aliasSearchTimer: ReturnType<typeof setTimeout> | null = null
+let loadSequence = 0
+let watcherGeneration = 0
 
 const providerHosts = new Set(['imap.mail.me.com', 'imap.icloud.com', 'imap.gmail.com', 'outlook.office365.com'])
 
@@ -48,17 +53,70 @@ function recommendedIMAPHost(username: string) {
 
 const filtered = computed(() => {
   const query = alias.value.trim().toLowerCase()
-  return query ? messages.value.filter((item) => item.aliases.some((address) => address.includes(query))) : messages.value
+  if (!query) return messages.value
+  const exact = scopedAlias.value === query && completeEmailPattern.test(query)
+  return messages.value.filter((item) => item.aliases.some((address) => {
+    const normalized = address.toLowerCase()
+    return exact ? normalized === query : normalized.includes(query)
+  }))
 })
 const pageCount = computed(() => Math.max(1, Math.ceil(filtered.value.length / pageSize.value)))
 const paged = computed(() => filtered.value.slice((page.value - 1) * pageSize.value, page.value * pageSize.value))
 const rangeStart = computed(() => filtered.value.length ? (page.value - 1) * pageSize.value + 1 : 0)
 const rangeEnd = computed(() => Math.min(page.value * pageSize.value, filtered.value.length))
-const keyOf = (message: MailMessage, address = message.aliases[0] || '') => `${address}:${message.uid}`
+function addressForMessage(message: MailMessage) {
+  const query = alias.value.trim().toLowerCase()
+  if (query) {
+    const exact = message.aliases.find((address) => address.toLowerCase() === query)
+    if (exact) return exact
+    const matched = message.aliases.find((address) => address.toLowerCase().includes(query))
+    if (matched) return matched
+  }
+  return message.aliases[0] || ''
+}
+const keyOf = (message: MailMessage) => `${addressForMessage(message)}:${message.uid}`
 const codesOf = (message: MailMessage | null | undefined) => [...(message?.partnerCodes || []), ...(message?.codes || [])]
 const syncMode = computed(() => ({ idle: '实时监听', sync: '正在同步', poll: '定时轮询', disabled: '未启用', stopped: '已停止' }[status.value?.syncMode || ''] || '等待启动'))
 
-watch([alias, pageSize], () => { page.value = 1 })
+function clearAliasSearchTimer() {
+  if (aliasSearchTimer == null) return
+  clearTimeout(aliasSearchTimer)
+  aliasSearchTimer = null
+}
+
+watch(alias, (value) => {
+  page.value = 1
+  selected.value = new Set()
+  clearAliasSearchTimer()
+  const query = value.trim().toLowerCase()
+  if (!query) {
+    if (scopedAlias.value) {
+      scopedAlias.value = ''
+      void load()
+    }
+    return
+  }
+  if (query === scopedAlias.value) return
+  if (!completeEmailPattern.test(query)) {
+    if (scopedAlias.value) {
+      scopedAlias.value = ''
+      void load()
+    }
+    return
+  }
+  if (scopedAlias.value) {
+    scopedAlias.value = ''
+    void load()
+  }
+  aliasSearchTimer = setTimeout(() => {
+    aliasSearchTimer = null
+    const current = alias.value.trim().toLowerCase()
+    if (stopped || current !== query || !completeEmailPattern.test(current) || scopedAlias.value === current) return
+    scopedAlias.value = current
+    void load()
+  }, aliasSearchDebounceMs)
+})
+watch(pageSize, () => { page.value = 1 })
 watch(pageCount, (count) => { if (page.value > count) page.value = count })
 watch(() => settingsForm.value.username, (username) => {
   const recommended = recommendedIMAPHost(username)
@@ -67,19 +125,22 @@ watch(() => settingsForm.value.username, (username) => {
 })
 
 async function load(showLoading = true) {
+  const sequence = ++loadSequence
   if (showLoading) loading.value = true
   error.value = ''
   try {
     const result = scopedAlias.value
       ? await mailAPI.mailboxMessages(scopedAlias.value, 100)
       : await mailAPI.mailboxRecent(500)
-    messages.value = result.messages
-    status.value = result.sync
-    selected.value = new Set()
+    if (sequence === loadSequence) {
+      messages.value = result.messages
+      status.value = result.sync
+      selected.value = new Set()
+    }
   } catch (reason) {
-    error.value = errorMessage(reason)
+    if (sequence === loadSequence) error.value = errorMessage(reason)
   } finally {
-    if (showLoading) loading.value = false
+    if (sequence === loadSequence) loading.value = false
   }
 }
 async function run() {
@@ -148,8 +209,8 @@ async function saveSettings() {
     settingsSaving.value = false
   }
 }
-async function watchMailbox() {
-  while (!stopped) {
+async function watchMailbox(generation: number) {
+  while (!stopped && generation === watcherGeneration) {
     const revision = status.value?.revision
     if (revision == null) {
       await new Promise((resolve) => setTimeout(resolve, 1000))
@@ -157,15 +218,20 @@ async function watchMailbox() {
     }
     try {
       const next = await mailAPI.mailboxWait(revision)
+      if (stopped || generation !== watcherGeneration) return
       if (next.revision !== revision) await load(false)
       else status.value = next
     } catch {
-      if (!stopped) await new Promise((resolve) => setTimeout(resolve, 3000))
+      if (!stopped && generation === watcherGeneration) await new Promise((resolve) => setTimeout(resolve, 3000))
     }
   }
 }
+function startMailboxWatcher() {
+  const generation = ++watcherGeneration
+  void watchMailbox(generation)
+}
 async function openMessage(message: MailMessage) {
-  const address = alias.value.trim().toLowerCase() || message.aliases[0]
+  const address = addressForMessage(message)
   if (!address) return
   try {
     detail.value = await mailAPI.mailboxMessage(address, message.uid)
@@ -180,13 +246,21 @@ function toggle(message: MailMessage) {
   next.has(key) ? next.delete(key) : next.add(key)
   selected.value = next
 }
+function removeHiddenAliases(items: Array<{ alias: string; uid: number }>) {
+  // The backend hide operation is UID-scoped: hiding one alias hides every
+  // alias attached to that IMAP message. Remove the complete row locally so
+  // clearing the alias search cannot reveal the same hidden message again.
+  const hiddenUIDs = new Set(items.map((item) => item.uid))
+  messages.value = messages.value.filter((message) => !hiddenUIDs.has(message.uid))
+}
 async function hideOne(message: MailMessage) {
   if (!status.value) return
-  const address = alias.value.trim().toLowerCase() || message.aliases[0]
+  const address = addressForMessage(message)
   if (!address) return
+  const item = { alias: address, uid: message.uid }
   try {
-    await mailAPI.hideMailboxMessage(address, message.uid, status.value)
-    messages.value = messages.value.filter((item) => item.uid !== message.uid)
+    await mailAPI.hideMailboxMessage(item.alias, item.uid, status.value)
+    removeHiddenAliases([item])
     detail.value = null
   } catch (reason) {
     error.value = errorMessage(reason)
@@ -194,11 +268,12 @@ async function hideOne(message: MailMessage) {
 }
 async function hideSelected() {
   if (!status.value || selected.value.size === 0) return
-  const items = messages.value.filter((item) => selected.value.has(keyOf(item))).map((item) => ({ alias: item.aliases[0], uid: item.uid }))
+  const selectedKeys = new Set(selected.value)
+  const items = messages.value.filter((item) => selectedKeys.has(keyOf(item))).map((item) => ({ alias: addressForMessage(item), uid: item.uid }))
+  if (!items.length) return
   try {
     await mailAPI.hideMailboxMessages(items, status.value)
-    const keys = selected.value
-    messages.value = messages.value.filter((item) => !keys.has(keyOf(item)))
+    removeHiddenAliases(items)
     selected.value = new Set()
   } catch (reason) {
     error.value = errorMessage(reason)
@@ -225,14 +300,21 @@ async function clearMessages() {
 }
 function setPage(next: number) { page.value = Math.min(pageCount.value, Math.max(1, next)) }
 function clearAliasFilter() {
-  scopedAlias.value = ''
   alias.value = ''
-  void load()
 }
 
-async function handleAccountChange() { stopped = true; await load(); stopped = false; void watchMailbox() }
-onMounted(async () => { window.addEventListener('mail-account-change', handleAccountChange); await load(); void watchMailbox() })
-onBeforeUnmount(() => { stopped = true; window.removeEventListener('mail-account-change', handleAccountChange) })
+async function handleAccountChange() {
+  const restartGeneration = ++watcherGeneration
+  await load()
+  if (!stopped && watcherGeneration === restartGeneration) startMailboxWatcher()
+}
+onMounted(async () => {
+  window.addEventListener('mail-account-change', handleAccountChange)
+  const initialGeneration = watcherGeneration
+  await load()
+  if (!stopped && watcherGeneration === initialGeneration) startMailboxWatcher()
+})
+onBeforeUnmount(() => { stopped = true; loadSequence++; watcherGeneration++; clearAliasSearchTimer(); window.removeEventListener('mail-account-change', handleAccountChange) })
 </script>
 
 <template>
