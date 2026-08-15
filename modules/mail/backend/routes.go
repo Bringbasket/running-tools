@@ -103,10 +103,8 @@ func (api *routeAPI) register(mux *http.ServeMux, auth httpx.Middleware, base st
 		protect(http.MethodPost, "/activity-logs/clear", api.clearActivityLogs)
 	}
 	if !legacy {
-		mux.HandleFunc("GET /share", api.sharePage)
-		mux.HandleFunc("GET /share/", api.sharePage)
-		mux.HandleFunc("GET /share/share.css", api.shareCSS)
-		mux.HandleFunc("GET /share/share.js", api.shareJS)
+		mux.HandleFunc("GET /share", api.shareRemoved)
+		mux.HandleFunc("GET /share/", api.shareRemoved)
 		mux.HandleFunc("GET /mail", api.shareLatest)
 		mux.HandleFunc("POST /share/v1/session", api.shareSession)
 		mux.HandleFunc("GET /share/v1/info", api.shareInfo)
@@ -291,33 +289,8 @@ func shareJSON(w http.ResponseWriter, status int, payload any) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"ok": status < 400, "data": payload})
 }
 
-func (api *routeAPI) sharePage(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-store")
-	_, _ = io.WriteString(w, `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>隐藏邮箱分享</title><link rel="stylesheet" href="/share/share.css"><script src="/share/share.js" defer></script></head><body><main><header><div><h1>共享收件箱</h1><p id="alias" class="muted"></p></div><span>只读</span></header><p id="status" class="muted">正在验证分享链接...</p><section id="content" hidden><div id="messages"></div></section></main></body></html>`)
-}
-
-func (api *routeAPI) shareCSS(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "text/css; charset=utf-8")
-	_, _ = io.WriteString(w, `*{box-sizing:border-box}body{font-family:Inter,system-ui,"PingFang SC",sans-serif;max-width:820px;margin:36px auto;padding:0 16px;color:#172033;background:#f6f8fb}main{overflow:hidden;background:#fff;border:1px solid #dfe5ec;border-radius:8px}header{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;padding:22px;border-bottom:1px solid #e8edf2}h1{margin:0;font-size:20px}header p{margin:5px 0 0}header>span{padding:4px 8px;color:#047857;background:#ecfdf5;border-radius:5px;font-size:11px;font-weight:700}.muted{color:#687386;font-size:12px}#status{padding:18px 22px}.mail{display:block;width:100%;padding:18px 22px;color:inherit;background:#fff;border-top:1px solid #e8edf2}.mail h3{margin:5px 0 10px;font-size:14px}.mail-meta{display:block}.mail-body{margin:14px 0 0;padding:14px 0 0;overflow:auto;border-top:1px solid #e8edf2;font:13px/1.65 inherit;white-space:pre-wrap;overflow-wrap:anywhere}.code{display:inline-flex;margin:3px 5px 3px 0;padding:4px 8px;color:#0f766e;background:#f0fdfa;border:0;border-radius:5px;font-weight:700;cursor:pointer}@media(max-width:600px){body{margin:12px auto;padding:0 10px}header,.mail{padding:15px}}`)
-}
-
-func (api *routeAPI) shareJS(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-store")
-	_, _ = io.WriteString(w, `(async()=>{
-const status=document.getElementById('status'),content=document.getElementById('content'),alias=document.getElementById('alias'),messages=document.getElementById('messages');let revision=0,stopped=false;
-const request=async url=>{const response=await fetch(url,{cache:'no-store'}),payload=await response.json();if(!response.ok)throw new Error(payload.data&&payload.data.error||'请求失败');return payload.data};
-const codeButton=value=>{const code=document.createElement('button');code.className='code';code.textContent=value;code.title='复制验证码';code.onclick=()=>navigator.clipboard?.writeText(value);return code};
-const loadMessages=async()=>{const payload=await request('/share/v1/messages?limit=50&full=1'),items=payload.messages||[];revision=payload.sync&&payload.sync.revision||revision;messages.replaceChildren();if(!items.length){const empty=document.createElement('p');empty.className='muted';empty.textContent='暂无可显示的邮件';messages.append(empty);return}for(const item of items){const article=document.createElement('article');article.className='mail';const meta=document.createElement('small');meta.className='muted mail-meta';meta.textContent=new Date(item.date*1000).toLocaleString('zh-CN')+' · '+(item.from||'');article.append(meta);const title=document.createElement('h3');title.textContent=item.subject||'无主题';article.append(title);const codes=document.createElement('div');for(const value of [...(item.partnerCodes||[]),...(item.codes||[])])codes.append(codeButton(value));article.append(codes);const body=document.createElement('pre');body.className='mail-body';body.textContent=item.text||'（邮件正文为空）';article.append(body);messages.append(article)}};
-const watch=async()=>{while(!stopped){try{const next=await request('/share/v1/sync/wait?revision='+revision+'&timeout=25');if(next.revision!==revision){revision=next.revision;await loadMessages()}}catch(error){if(!stopped)await new Promise(resolve=>setTimeout(resolve,3000))}}};
-try{
-  const token=location.hash.slice(1);
-  if(token){window.location.replace('/share/v1/latest?token='+encodeURIComponent(token));return}
-  const info=await request('/share/v1/info');alias.textContent=info.alias;revision=info.sync&&info.sync.revision||0;status.textContent='';content.hidden=false;await loadMessages();watch();
-}catch(error){status.textContent=error instanceof Error?error.message:'分享链接无效'}
-window.addEventListener('beforeunload',()=>{stopped=true});
-})()`)
+func (api *routeAPI) shareRemoved(w http.ResponseWriter, _ *http.Request) {
+	shareJSON(w, http.StatusGone, map[string]string{"error": "旧版 /share 分享地址已停用，请使用 /mail?email=...&token=..."})
 }
 
 func (api *routeAPI) shareSession(w http.ResponseWriter, r *http.Request) {

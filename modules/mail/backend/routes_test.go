@@ -194,16 +194,15 @@ func TestShareSessionScopesMessageDetailsToLinkedAlias(t *testing.T) {
 	}
 }
 
-func TestSharePageRedirectsHashTokenToRawLatestJSON(t *testing.T) {
+func TestLegacySharePageIsRemoved(t *testing.T) {
 	api := &routeAPI{}
 	mux := http.NewServeMux()
 	api.register(mux, httpx.APIKey("secret"), "/api/mail/v1", false)
-	request := httptest.NewRequest(http.MethodGet, "/share/share.js", nil)
+	request := httptest.NewRequest(http.MethodGet, "/share/", nil)
 	response := httptest.NewRecorder()
 	mux.ServeHTTP(response, request)
-	script := response.Body.String()
-	if response.Code != http.StatusOK || response.Header().Get("Cache-Control") != "no-store" || !strings.Contains(script, "window.location.replace('/share/v1/latest?token='+encodeURIComponent(token))") || strings.Contains(script, "showJSON") {
-		t.Fatalf("share page did not redirect to raw JSON: %s", script)
+	if response.Code != http.StatusGone || !strings.Contains(response.Header().Get("Content-Type"), "application/json") || !strings.Contains(response.Body.String(), "旧版 /share 分享地址已停用") {
+		t.Fatalf("legacy share page was not removed: %d %s", response.Code, response.Body.String())
 	}
 }
 

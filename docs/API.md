@@ -106,7 +106,7 @@ X-Mail-Account-ID: default
 不带 `full=1` 时仍返回摘要，单封详情接口继续兼容。
 
 生成的取件地址为 `/mail?email=ALIAS&token=TOKEN`，访问时由浏览器直接显示紧凑 JSON 响应；旧的
-`/share/#TOKEN` 地址仍会兼容并跳转到 JSON 接口。其中 `data.message` 只包含最新邮件的 `uid`、
+`/share/#TOKEN` 地址已停用并返回 `410 Gone`。其中 `data.message` 只包含最新邮件的 `uid`、
 `from`、`subject`、`date`、压缩后的 `text`、`codes` 和 `partnerCodes`，不会返回重复的 `aliases` 或
 `safeHtml`。
 
