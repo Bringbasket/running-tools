@@ -45,6 +45,8 @@ const batchShareLoading = ref(false)
 const batchShareError = ref('')
 const clearSharesOpen = ref(false)
 const clearSharesError = ref('')
+const clearSharesLoading = ref(false)
+const clearSharesReturnToShare = ref(false)
 const deleteTarget = ref<MailAlias | null>(null)
 const deleteConfirm = ref('')
 const deleteError = ref('')
@@ -265,18 +267,30 @@ function downloadBatchShareTXT() {
   const anchor = document.createElement('a'); anchor.href = url; anchor.download = 'hme-retrieval-links.txt'; anchor.click(); URL.revokeObjectURL(url)
 }
 async function revokeShare(link: ShareLink) { shareLoading.value = true; shareError.value = ''; try { await mailAPI.revokeShareLink(link.id); link.active = false; link.revokedAt = Date.now() / 1000; showToast('分享链接已撤销') } catch (reason) { shareError.value = errorMessage(reason) } finally { shareLoading.value = false } }
-function openClearShares() { clearSharesError.value = ''; shareOpen.value = false; clearSharesOpen.value = true }
-function closeClearShares() { if (shareLoading.value) return; clearSharesOpen.value = false; shareOpen.value = Boolean(sharingAlias.value) }
+function openClearShares(returnToShare: boolean) {
+	clearSharesError.value = ''
+	clearSharesReturnToShare.value = returnToShare && Boolean(sharingAlias.value)
+	if (clearSharesReturnToShare.value) shareOpen.value = false
+	clearSharesOpen.value = true
+}
+function closeClearShares() {
+	if (clearSharesLoading.value) return
+	clearSharesOpen.value = false
+	shareOpen.value = clearSharesReturnToShare.value && Boolean(sharingAlias.value)
+	clearSharesReturnToShare.value = false
+}
 async function clearInactiveShares() {
-	if (!sharingAlias.value) return
-	shareLoading.value = true; shareNotice.value = ''
+	if (clearSharesLoading.value) return
+	clearSharesLoading.value = true; clearSharesError.value = ''; shareNotice.value = ''
 	try {
 		const result = await mailAPI.clearInactiveShareLinks()
-		shareLinks.value = (await mailAPI.shareLinks(sharingAlias.value.anonymousId)).links
+		const returnToShare = clearSharesReturnToShare.value && Boolean(sharingAlias.value)
+		if (returnToShare && sharingAlias.value) shareLinks.value = (await mailAPI.shareLinks(sharingAlias.value.anonymousId)).links
 		clearSharesOpen.value = false
-		shareOpen.value = true
+		shareOpen.value = returnToShare
+		clearSharesReturnToShare.value = false
 		showToast(`已从数据库清理 ${result.deleted} 条失效分享记录`)
-	} catch (reason) { clearSharesError.value = errorMessage(reason) } finally { shareLoading.value = false }
+	} catch (reason) { clearSharesError.value = errorMessage(reason) } finally { clearSharesLoading.value = false }
 }
 async function saveEdit() {
   if (!editing.value || !editLabel.value.trim()) return
@@ -346,6 +360,7 @@ onBeforeUnmount(() => {
           <label class="search-field"><Search :size="16" /><input v-model="query" placeholder="搜索邮箱、标签、备注或转发地址" /></label>
           <div class="segmented" aria-label="状态筛选"><button v-for="option in ['all', 'active', 'inactive'] as const" :key="option" :class="{ active: state === option }" @click="state = option">{{ { all: '全部', active: '启用', inactive: '停用' }[option] }}</button></div>
           <button class="button ghost export-button" title="批量取件" @click="openBatchShare"><MailPlus :size="16" /><span>批量取件</span></button>
+          <button class="button ghost danger-action export-button" title="批量清理失效取件链接" :disabled="clearSharesLoading" @click="openClearShares(false)"><Trash2 :size="16" /><span>清理失效</span></button>
           <button class="button ghost export-button" title="导出 CSV" @click="exportCSV"><Download :size="16" /><span>导出</span></button>
         </div>
         <div class="list-meta">
@@ -404,7 +419,7 @@ onBeforeUnmount(() => {
 
   <AppDialog id="share-alias" :open="shareOpen" title="分享收件地址" :subtitle="sharingAlias?.hme || ''" :busy="shareLoading" @close="shareOpen = false">
       <div class="share-dialog">
-        <div class="share-tools"><button class="button ghost danger-action" :disabled="shareLoading || !shareLinks.some((item) => !item.active)" @click="openClearShares"><Trash2 :size="15" />清理失效</button></div>
+        <div class="share-tools"><button class="button ghost danger-action" :disabled="shareLoading || !shareLinks.some((item) => !item.active)" @click="openClearShares(true)"><Trash2 :size="15" />清理失效</button></div>
         <label class="field"><span>有效期</span><select v-model="shareExpiry"><option :value="3600">1 小时</option><option :value="86400">1 天</option><option :value="604800">7 天</option><option :value="2592000">30 天</option><option :value="null">永久</option></select></label>
         <p v-if="shareError" class="message error">{{ shareError }}</p>
         <p v-if="shareNotice" class="message success">{{ shareNotice }}</p>
@@ -438,10 +453,10 @@ onBeforeUnmount(() => {
     <template #actions><button type="button" class="button ghost" :disabled="Boolean(pendingID)" @click="deleteTarget = null">取消</button><button type="button" class="button danger-action danger-confirm" :disabled="Boolean(pendingID) || deleteConfirm !== deleteTarget?.hme" @click="deleteTarget && performAliasAction(deleteTarget, 'delete')"><LoaderCircle v-if="pendingID" :size="15" class="spin" /><Trash2 v-else :size="15" />永久删除</button></template>
   </AppDialog>
 
-  <AppDialog id="clear-shares" :open="clearSharesOpen" title="清理失效分享" subtitle="此操作不可恢复" role="alertdialog" :busy="shareLoading" @close="closeClearShares">
+  <AppDialog id="clear-shares" :open="clearSharesOpen" title="清理失效分享" subtitle="此操作不可恢复" role="alertdialog" :busy="clearSharesLoading" @close="closeClearShares">
     <p>将从 PostgreSQL 永久删除当前账号所有已撤销或已过期的分享记录。</p>
     <p v-if="clearSharesError" class="message error">{{ clearSharesError }}</p>
-    <template #actions><button type="button" class="button ghost" :disabled="shareLoading" @click="closeClearShares">取消</button><button type="button" class="button danger-action danger-confirm" :disabled="shareLoading" @click="clearInactiveShares"><LoaderCircle v-if="shareLoading" :size="15" class="spin" /><Trash2 v-else :size="15" />永久清理</button></template>
+    <template #actions><button type="button" class="button ghost" :disabled="clearSharesLoading" @click="closeClearShares">取消</button><button type="button" class="button danger-action danger-confirm" :disabled="clearSharesLoading" @click="clearInactiveShares"><LoaderCircle v-if="clearSharesLoading" :size="15" class="spin" /><Trash2 v-else :size="15" />永久清理</button></template>
   </AppDialog>
 </template>
 
