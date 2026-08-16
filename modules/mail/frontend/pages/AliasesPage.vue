@@ -389,7 +389,7 @@ onBeforeUnmount(() => {
                 <td data-label="已注册应用">
                   <div v-if="alias.registeredApps?.length" class="app-badges">
                     <span v-for="app in alias.registeredApps" :key="app.key" class="app-badge" :class="app.status" :title="app.status === 'confirmed' ? `${app.label}：已收到后续登录或欢迎邮件` : `${app.label}：已收到注册验证码`">
-                      <strong>{{ app.label }}</strong><small>{{ app.status === 'confirmed' ? '已确认' : '已注册' }}</small>
+                      {{ app.label }} {{ app.status === 'confirmed' ? '已确认' : '已注册' }}
                     </span>
                   </div>
                   <span v-else class="muted">—</span>
@@ -516,9 +516,7 @@ onBeforeUnmount(() => {
 .pagination-bar strong { min-width: 82px; color: var(--text); font-size: 11px; font-weight: 600; text-align: center; }
 .pagination-bar .icon-button { width: 31px; height: 31px; }
 .app-badges { display: flex; min-width: 112px; align-items: center; gap: 6px; flex-wrap: wrap; }
-.app-badge { display: inline-flex; min-height: 27px; align-items: center; gap: 6px; padding: 0 8px; border: 1px solid; border-radius: 5px; white-space: nowrap; }
-.app-badge strong { font-size: 11px; font-weight: 750; }
-.app-badge small { font-size: 10px; font-weight: 600; }
+.app-badge { display: inline-flex; height: 28px; align-items: center; padding: 0 9px; border: 1px solid; border-radius: 5px; font-size: 12px; font-weight: 600; line-height: 1; white-space: nowrap; }
 .app-badge.observed { color: #92400e; background: #fffbeb; border-color: #fde68a; }
 .app-badge.confirmed { color: #047857; background: #ecfdf5; border-color: #a7f3d0; }
 :root[data-theme="dark"] .app-badge.observed { color: #fcd34d; background: rgba(245, 158, 11, .12); border-color: rgba(245, 158, 11, .3); }

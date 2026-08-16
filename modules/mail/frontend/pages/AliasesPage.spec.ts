@@ -93,9 +93,10 @@ describe('邮箱列表分页', () => {
     const badges = wrapper.findAll('.app-badge')
     expect(badges).toHaveLength(2)
     expect(badges[0].classes()).toContain('observed')
-    expect(badges[0].text()).toContain('GPT已注册')
+    expect(badges[0].text()).toBe('GPT 已注册')
     expect(badges[1].classes()).toContain('confirmed')
-    expect(badges[1].text()).toContain('GPT已确认')
+    expect(badges[1].text()).toBe('GPT 已确认')
+    expect(badges.every((badge) => !badge.find('strong, small').exists())).toBe(true)
 
     await wrapper.get('.search-field input').setValue('已确认')
     expect(wrapper.findAll('tbody tr')).toHaveLength(1)
