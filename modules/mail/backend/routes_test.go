@@ -128,6 +128,83 @@ func TestLegacyExportReturnsEnvelopeAndCanonicalReturnsCSV(t *testing.T) {
 	}
 }
 
+type staticAliasApplicationStore struct {
+	states map[string][]AliasApplication
+}
+
+func (store *staticAliasApplicationStore) ObserveMessages(context.Context, []MailMessage) error {
+	return nil
+}
+
+func (store *staticAliasApplicationStore) List(context.Context) (map[string][]AliasApplication, error) {
+	return store.states, nil
+}
+
+func (store *staticAliasApplicationStore) DeleteAlias(context.Context, string) error { return nil }
+func (store *staticAliasApplicationStore) Backfill(context.Context) error            { return nil }
+
+func TestBatchShareLinksFiltersBothGPTRegistrationStates(t *testing.T) {
+	root := t.TempDir()
+	configPath := filepath.Join(root, "config.json")
+	if err := storage.WriteJSON(configPath, testConfig(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"success":true,"result":{"hmeEmails":[` +
+			`{"hme":"unregistered@icloud.com","anonymousId":"none","isActive":true,"createTimestamp":100},` +
+			`{"hme":"observed@icloud.com","anonymousId":"observed","isActive":true,"createTimestamp":200},` +
+			`{"hme":"confirmed@icloud.com","anonymousId":"confirmed","isActive":true,"createTimestamp":300}` +
+			`]}}`))
+	}))
+	defer upstream.Close()
+	session := NewSessionManager(configPath, filepath.Join(root, "state"))
+	session.newClient = func(config ICloudConfig) (*Client, error) {
+		return NewClient(config, WithBaseURL(upstream.URL), WithHTTPClient(upstream.Client()))
+	}
+	mailbox := NewMailboxService(root, nil)
+	mailbox.applications = &staticAliasApplicationStore{states: map[string][]AliasApplication{
+		"observed@icloud.com":  {{Key: aliasAppGPT, Label: "GPT", Status: aliasAppStatusObserved}},
+		"confirmed@icloud.com": {{Key: aliasAppGPT, Label: "GPT", Status: aliasAppStatusConfirmed}},
+	}}
+	shares := NewShareLinkStore(root)
+	api := &routeAPI{session: session, mailbox: mailbox, shares: shares}
+
+	request := httptest.NewRequest(http.MethodPost, "/api/mail/v1/aliases/batch-share-links", strings.NewReader(`{"count":2,"expiresInSeconds":3600,"scope":"gpt_registered"}`))
+	response := httptest.NewRecorder()
+	api.createBatchShareLinks(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("unexpected batch response: %d %s", response.Code, response.Body.String())
+	}
+	var envelope struct {
+		Data struct {
+			Scope string                   `json:"scope"`
+			Items []map[string]interface{} `json:"items"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if envelope.Data.Scope != "gpt_registered" || len(envelope.Data.Items) != 2 {
+		t.Fatalf("unexpected filtered result: %#v", envelope.Data)
+	}
+	if envelope.Data.Items[0]["alias"] != "observed@icloud.com" || envelope.Data.Items[1]["alias"] != "confirmed@icloud.com" {
+		t.Fatalf("yellow and green GPT states were not selected in creation order: %#v", envelope.Data.Items)
+	}
+	if len(shares.List("unregistered@icloud.com")) != 0 {
+		t.Fatal("unregistered alias received a share link")
+	}
+
+	request = httptest.NewRequest(http.MethodPost, "/api/mail/v1/aliases/batch-share-links", strings.NewReader(`{"count":3,"scope":"gpt_registered"}`))
+	response = httptest.NewRecorder()
+	api.createBatchShareLinks(response, request)
+	if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "已注册 GPT 的启用邮箱只有 2 个") {
+		t.Fatalf("unexpected insufficient aliases response: %d %s", response.Code, response.Body.String())
+	}
+	if len(shares.List("observed@icloud.com")) != 1 || len(shares.List("confirmed@icloud.com")) != 1 {
+		t.Fatal("insufficient request generated partial links")
+	}
+}
+
 func TestShareSessionScopesMessageDetailsToLinkedAlias(t *testing.T) {
 	root := t.TempDir()
 	mailbox := NewMailboxService(root, nil)

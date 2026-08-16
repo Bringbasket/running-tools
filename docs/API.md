@@ -140,8 +140,10 @@ X-Mail-Account-ID: default
 | POST | `/api/mail/v1/mail/messages/clear` | 永久清理当前账号的 SQL 邮件缓存 |
 | GET | `/api/mail/v1/mail/sync/wait` | 等待缓存 revision 变化 |
 
-批量取件接口请求体为 `{ "count": 5, "expiresInSeconds": 86400 }`。`count` 范围为 1-750，
-只选择启用中的隐藏邮箱，按邮箱创建时间从早到晚排序；创建时间缺失的邮箱排在最后。
+批量取件接口请求体为 `{ "count": 5, "expiresInSeconds": 86400, "scope": "all" }`。`count`
+范围为 1-750，`scope` 支持 `all`（全部启用邮箱，默认）和 `gpt_registered`（已注册 GPT，
+同时包含黄色 `observed` 和绿色 `confirmed` 状态）。筛选按当前母号隔离，只选择启用中的隐藏邮箱，
+并按邮箱创建时间从早到晚排序；创建时间缺失的邮箱排在最后。
 可用邮箱不足时返回 `INSUFFICIENT_ALIASES`，不会生成部分结果。`expiresInSeconds` 可为 `null`
 表示永久，也可以传 300 至 31536000 秒之间的自定义值。响应 `data.items` 中每项包含
 `alias`、`shareUrl` 和有效期；原始 token 只在创建响应返回，数据库只保存摘要和哈希。

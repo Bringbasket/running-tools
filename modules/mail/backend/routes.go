@@ -591,10 +591,15 @@ func (api *routeAPI) createShareLink(w http.ResponseWriter, r *http.Request) {
 }
 
 func (api *routeAPI) createBatchShareLinks(w http.ResponseWriter, r *http.Request) {
+	const (
+		batchShareScopeAll           = "all"
+		batchShareScopeGPTRegistered = "gpt_registered"
+	)
 	payload := struct {
-		Count            int  `json:"count"`
-		ExpiresInSeconds *int `json:"expiresInSeconds"`
-	}{Count: 1, ExpiresInSeconds: func() *int { value := 7 * 24 * 60 * 60; return &value }()}
+		Count            int    `json:"count"`
+		ExpiresInSeconds *int   `json:"expiresInSeconds"`
+		Scope            string `json:"scope"`
+	}{Count: 1, ExpiresInSeconds: func() *int { value := 7 * 24 * 60 * 60; return &value }(), Scope: batchShareScopeAll}
 	if r.ContentLength != 0 {
 		if err := httpx.DecodeJSON(w, r, &payload, 64<<10); err != nil {
 			httpx.WriteError(w, r, http.StatusBadRequest, "BAD_REQUEST", err.Error())
@@ -605,10 +610,24 @@ func (api *routeAPI) createBatchShareLinks(w http.ResponseWriter, r *http.Reques
 		httpx.WriteError(w, r, http.StatusBadRequest, "BAD_REQUEST", "count 必须是 1 到 750 之间的整数")
 		return
 	}
+	payload.Scope = strings.ToLower(strings.TrimSpace(payload.Scope))
+	if payload.Scope == "" {
+		payload.Scope = batchShareScopeAll
+	}
+	if payload.Scope != batchShareScopeAll && payload.Scope != batchShareScopeGPTRegistered {
+		httpx.WriteError(w, r, http.StatusBadRequest, "BAD_REQUEST", "scope 必须是 all 或 gpt_registered")
+		return
+	}
 	aliases, err := api.sessionFor(r).ListAliases(r.Context())
 	if err != nil {
 		api.writeMailError(w, r, err)
 		return
+	}
+	if payload.Scope == batchShareScopeGPTRegistered {
+		if err := api.mailboxFor(r).EnrichAliasApplications(r.Context(), aliases); err != nil {
+			httpx.WriteError(w, r, http.StatusInternalServerError, "APP_STATE_ERROR", "读取邮箱应用状态失败")
+			return
+		}
 	}
 	type candidate struct {
 		alias     string
@@ -619,6 +638,9 @@ func (api *routeAPI) createBatchShareLinks(w http.ResponseWriter, r *http.Reques
 	seen := make(map[string]struct{}, len(aliases))
 	for index, raw := range aliases {
 		if active, ok := raw["isActive"].(bool); ok && !active {
+			continue
+		}
+		if payload.Scope == batchShareScopeGPTRegistered && !aliasHasRegisteredGPT(raw) {
 			continue
 		}
 		alias := shareAlias(fmt.Sprint(raw["hme"]))
@@ -646,7 +668,11 @@ func (api *routeAPI) createBatchShareLinks(w http.ResponseWriter, r *http.Reques
 		return left.createdAt < right.createdAt
 	})
 	if payload.Count > len(candidates) {
-		httpx.WriteError(w, r, http.StatusConflict, "INSUFFICIENT_ALIASES", fmt.Sprintf("可用邮箱只有 %d 个，无法生成 %d 个取件链接", len(candidates), payload.Count))
+		description := "启用邮箱"
+		if payload.Scope == batchShareScopeGPTRegistered {
+			description = "已注册 GPT 的启用邮箱"
+		}
+		httpx.WriteError(w, r, http.StatusConflict, "INSUFFICIENT_ALIASES", fmt.Sprintf("%s只有 %d 个，无法生成 %d 个取件链接", description, len(candidates), payload.Count))
 		return
 	}
 	inputs := make([]shareLinkCreateInput, 0, payload.Count)
@@ -658,7 +684,20 @@ func (api *routeAPI) createBatchShareLinks(w http.ResponseWriter, r *http.Reques
 		httpx.WriteError(w, r, http.StatusBadRequest, "BAD_REQUEST", err.Error())
 		return
 	}
-	httpx.WriteData(w, r, http.StatusOK, map[string]any{"items": items, "count": len(items)})
+	httpx.WriteData(w, r, http.StatusOK, map[string]any{"items": items, "count": len(items), "scope": payload.Scope})
+}
+
+func aliasHasRegisteredGPT(alias map[string]any) bool {
+	applications, ok := alias["registeredApps"].([]AliasApplication)
+	if !ok {
+		return false
+	}
+	for _, application := range applications {
+		if application.Key == aliasAppGPT && (application.Status == aliasAppStatusObserved || application.Status == aliasAppStatusConfirmed) {
+			return true
+		}
+	}
+	return false
 }
 
 func (api *routeAPI) revokeShareLink(w http.ResponseWriter, r *http.Request) {

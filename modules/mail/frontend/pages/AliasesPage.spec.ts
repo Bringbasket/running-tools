@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   createSchedule: vi.fn(),
   aliasAction: vi.fn(),
   shareLinks: vi.fn(),
+  createBatchShareLinks: vi.fn(),
   clearInactiveShareLinks: vi.fn(),
 }))
 
@@ -17,6 +18,7 @@ vi.mock('../api', () => ({
     createSchedule: mocks.createSchedule,
     aliasAction: mocks.aliasAction,
     shareLinks: mocks.shareLinks,
+    createBatchShareLinks: mocks.createBatchShareLinks,
     clearInactiveShareLinks: mocks.clearInactiveShareLinks,
   },
 }))
@@ -100,6 +102,32 @@ describe('邮箱列表分页', () => {
     expect(wrapper.get('tbody tr').text()).toContain('alias-2@icloud.com')
     wrapper.unmount()
   })
+
+  it('批量取件可筛选黄色和绿色的 GPT 注册状态', async () => {
+		const items = aliases(3)
+		items[0].registeredApps = [{ key: 'gpt', label: 'GPT', status: 'observed', detectedAt: 1786500000 }]
+		items[1].registeredApps = [{ key: 'gpt', label: 'GPT', status: 'confirmed', detectedAt: 1786500000, confirmedAt: 1786500600 }]
+		mocks.aliases.mockResolvedValue(items)
+		mocks.createSchedule.mockResolvedValue({
+			enabled: false, running: false, batchSize: 5, aliasIntervalSeconds: 3,
+			intervalSeconds: 180, label: 'shopping', note: '',
+		})
+		mocks.createBatchShareLinks.mockResolvedValue({ items: [], count: 0, scope: 'gpt_registered' })
+		const wrapper = mount(AliasesPage, { global: { stubs: { Teleport: true } } })
+		await flushPromises()
+
+		await wrapper.get('button[title="批量取件"]').trigger('click')
+		const scope = wrapper.get<HTMLSelectElement>('select[name="batch-share-scope"]')
+		expect(scope.findAll('option')[1].text()).toContain('已注册 GPT（2）')
+		await scope.setValue('gpt_registered')
+		expect(wrapper.get('.batch-share-hint').text()).toContain('黄色“GPT 已注册”和绿色“GPT 已确认”')
+		expect(wrapper.get<HTMLInputElement>('#batch-share-dialog input[type="number"]').element.value).toBe('2')
+
+		await wrapper.get('#batch-share-dialog .button.primary').trigger('click')
+		await flushPromises()
+		expect(mocks.createBatchShareLinks).toHaveBeenCalledWith(2, 86400, 'gpt_registered')
+		wrapper.unmount()
+	})
 
   it('空闲时不轮询，运行中只轮询当前任务标签', async () => {
     vi.useFakeTimers()
