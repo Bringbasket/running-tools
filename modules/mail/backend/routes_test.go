@@ -214,11 +214,14 @@ func TestBatchShareLinksFiltersBothGPTRegistrationStates(t *testing.T) {
 		t.Fatal("unregistered GPT scope did not select the unregistered alias")
 	}
 
-	request = httptest.NewRequest(http.MethodPost, "/api/mail/v1/aliases/batch-share-links", strings.NewReader(`{"count":1,"scope":"all"}`))
+	request = httptest.NewRequest(http.MethodPost, "/api/mail/v1/aliases/batch-share-links", strings.NewReader(`{"count":3}`))
 	response = httptest.NewRecorder()
 	api.createBatchShareLinks(response, request)
-	if response.Code != http.StatusBadRequest {
-		t.Fatalf("removed all scope returned %d: %s", response.Code, response.Body.String())
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"scope":"all"`) {
+		t.Fatalf("unexpected all aliases response: %d %s", response.Code, response.Body.String())
+	}
+	if len(shares.List("unregistered@icloud.com")) != 2 || len(shares.List("observed@icloud.com")) != 2 || len(shares.List("confirmed@icloud.com")) != 2 {
+		t.Fatal("all scope did not select every enabled alias")
 	}
 }
 

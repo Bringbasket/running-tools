@@ -9,7 +9,7 @@ export const mailAPI = {
   updateAlias: (id: string, label: string, note: string) => apiRequest<MailAlias>(`${base}/aliases/${encodeURIComponent(id)}/update`, { method: 'POST', body: JSON.stringify({ label, note }) }),
   shareLinks: (id: string) => apiRequest<{ alias: string; links: ShareLink[] }>(`${base}/aliases/${encodeURIComponent(id)}/share-links`),
   createShareLink: (id: string, expiresInSeconds: number | null) => apiRequest<ShareLink>(`${base}/aliases/${encodeURIComponent(id)}/share-links`, { method: 'POST', body: JSON.stringify({ expiresInSeconds }) }),
-  createBatchShareLinks: (count: number, expiresInSeconds: number | null, scope: 'gpt_registered' | 'gpt_unregistered' = 'gpt_registered') => apiRequest<{ items: BatchShareLinkItem[]; count: number; scope: string }>(`${base}/aliases/batch-share-links`, { method: 'POST', body: JSON.stringify({ count, expiresInSeconds, scope }) }),
+  createBatchShareLinks: (count: number, expiresInSeconds: number | null, scope: 'all' | 'gpt_registered' | 'gpt_unregistered' = 'all') => apiRequest<{ items: BatchShareLinkItem[]; count: number; scope: string }>(`${base}/aliases/batch-share-links`, { method: 'POST', body: JSON.stringify({ count, expiresInSeconds, scope }) }),
   revokeShareLink: (id: string) => apiRequest(`${base}/share-links/${encodeURIComponent(id)}/revoke`, { method: 'POST', body: '{}' }),
   clearInactiveShareLinks: () => apiRequest<{ cleared: boolean; deleted: number }>(`${base}/share-links/clear-inactive`, { method: 'POST', body: '{}' }),
   mailboxStatus: () => apiRequest<MailboxStatus>(`${base}/mail/sync/status`),
