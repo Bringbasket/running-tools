@@ -118,14 +118,22 @@ describe('邮箱列表分页', () => {
 
 		await wrapper.get('button[title="批量取件"]').trigger('click')
 		const scope = wrapper.get<HTMLSelectElement>('select[name="batch-share-scope"]')
-		expect(scope.findAll('option')[1].text()).toContain('已注册 GPT（2）')
-		await scope.setValue('gpt_registered')
+		expect(scope.findAll('option')).toHaveLength(2)
+		expect(scope.findAll('option')[0].text()).toContain('已注册 GPT（2）')
+		expect(scope.findAll('option')[1].text()).toContain('未注册 GPT（1）')
+		expect(scope.element.value).toBe('gpt_registered')
 		expect(wrapper.get('.batch-share-hint').text()).toContain('黄色“GPT 已注册”和绿色“GPT 已确认”')
 		expect(wrapper.get<HTMLInputElement>('#batch-share-dialog input[type="number"]').element.value).toBe('2')
-
 		await wrapper.get('#batch-share-dialog .button.primary').trigger('click')
 		await flushPromises()
 		expect(mocks.createBatchShareLinks).toHaveBeenCalledWith(2, 86400, 'gpt_registered')
+
+		await scope.setValue('gpt_unregistered')
+		expect(wrapper.get('.batch-share-hint').text()).toContain('尚未检测到 GPT 注册状态')
+		expect(wrapper.get<HTMLInputElement>('#batch-share-dialog input[type="number"]').element.value).toBe('1')
+		await wrapper.get('#batch-share-dialog .button.primary').trigger('click')
+		await flushPromises()
+		expect(mocks.createBatchShareLinks).toHaveBeenLastCalledWith(1, 86400, 'gpt_unregistered')
 		wrapper.unmount()
 	})
 

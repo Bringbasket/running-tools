@@ -203,6 +203,23 @@ func TestBatchShareLinksFiltersBothGPTRegistrationStates(t *testing.T) {
 	if len(shares.List("observed@icloud.com")) != 1 || len(shares.List("confirmed@icloud.com")) != 1 {
 		t.Fatal("insufficient request generated partial links")
 	}
+
+	request = httptest.NewRequest(http.MethodPost, "/api/mail/v1/aliases/batch-share-links", strings.NewReader(`{"count":1,"scope":"gpt_unregistered"}`))
+	response = httptest.NewRecorder()
+	api.createBatchShareLinks(response, request)
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"scope":"gpt_unregistered"`) {
+		t.Fatalf("unexpected unregistered GPT response: %d %s", response.Code, response.Body.String())
+	}
+	if len(shares.List("unregistered@icloud.com")) != 1 {
+		t.Fatal("unregistered GPT scope did not select the unregistered alias")
+	}
+
+	request = httptest.NewRequest(http.MethodPost, "/api/mail/v1/aliases/batch-share-links", strings.NewReader(`{"count":1,"scope":"all"}`))
+	response = httptest.NewRecorder()
+	api.createBatchShareLinks(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("removed all scope returned %d: %s", response.Code, response.Body.String())
+	}
 }
 
 func TestShareSessionScopesMessageDetailsToLinkedAlias(t *testing.T) {

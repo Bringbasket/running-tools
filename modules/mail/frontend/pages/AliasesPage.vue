@@ -37,7 +37,7 @@ const shareCreatedURL = ref('')
 const copiedShareID = ref('')
 const batchShareOpen = ref(false)
 const batchShareCount = ref(5)
-const batchShareScope = ref<'all' | 'gpt_registered'>('all')
+const batchShareScope = ref<'gpt_registered' | 'gpt_unregistered'>('gpt_registered')
 const batchShareExpiryPreset = ref<'3600' | '86400' | '604800' | '2592000' | 'never' | 'custom'>('86400')
 const batchShareExpiryAt = ref('')
 const batchShareResults = ref<BatchShareLinkItem[]>([])
@@ -72,7 +72,8 @@ const visible = computed(() => aliases.value.filter((alias) => {
 }))
 const activeCount = computed(() => aliases.value.filter((alias) => alias.isActive !== false).length)
 const gptRegisteredActiveCount = computed(() => aliases.value.filter((alias) => alias.isActive !== false && alias.registeredApps?.some((application) => application.key === 'gpt' && (application.status === 'observed' || application.status === 'confirmed'))).length)
-const batchShareAvailableCount = computed(() => batchShareScope.value === 'gpt_registered' ? gptRegisteredActiveCount.value : activeCount.value)
+const gptUnregisteredActiveCount = computed(() => activeCount.value - gptRegisteredActiveCount.value)
+const batchShareAvailableCount = computed(() => batchShareScope.value === 'gpt_registered' ? gptRegisteredActiveCount.value : gptUnregisteredActiveCount.value)
 const pageCount = computed(() => Math.max(1, Math.ceil(visible.value.length / pageSize.value)))
 const pagedAliases = computed(() => {
   const start = (currentPage.value - 1) * pageSize.value
@@ -258,7 +259,7 @@ function batchExpirySeconds() {
   }
   return Number(batchShareExpiryPreset.value)
 }
-function openBatchShare() { batchShareOpen.value = true; batchShareError.value = ''; batchShareResults.value = []; batchShareScope.value = 'all'; batchShareCount.value = Math.min(5, Math.max(1, activeCount.value)); batchShareExpiryPreset.value = '86400'; batchShareExpiryAt.value = '' }
+function openBatchShare() { batchShareOpen.value = true; batchShareError.value = ''; batchShareResults.value = []; batchShareScope.value = 'gpt_registered'; batchShareCount.value = Math.min(5, Math.max(1, gptRegisteredActiveCount.value)); batchShareExpiryPreset.value = '86400'; batchShareExpiryAt.value = '' }
 function closeBatchShare() { if (!batchShareLoading.value) batchShareOpen.value = false }
 async function createBatchShare() {
   batchShareLoading.value = true; batchShareError.value = ''
@@ -449,13 +450,13 @@ onBeforeUnmount(() => {
   <AppDialog id="batch-share" :open="batchShareOpen" title="批量取件" subtitle="按邮箱创建时间从早到晚生成取件地址" width="wide" :busy="batchShareLoading" @close="closeBatchShare">
     <div class="batch-share-dialog">
       <div class="batch-share-form">
-        <label class="field"><span>邮箱范围</span><select v-model="batchShareScope" name="batch-share-scope"><option value="all">全部启用邮箱（{{ activeCount }}）</option><option value="gpt_registered">已注册 GPT（{{ gptRegisteredActiveCount }}）</option></select></label>
+        <label class="field"><span>邮箱范围</span><select v-model="batchShareScope" name="batch-share-scope"><option value="gpt_registered">已注册 GPT（{{ gptRegisteredActiveCount }}）</option><option value="gpt_unregistered">未注册 GPT（{{ gptUnregisteredActiveCount }}）</option></select></label>
         <label class="field"><span>邮箱数量 <small>1 - 750 个</small></span><input v-model.number="batchShareCount" type="number" min="1" max="750" /></label>
         <label class="field"><span>链接有效期</span><select v-model="batchShareExpiryPreset"><option value="3600">1 小时</option><option value="86400">1 天</option><option value="604800">7 天</option><option value="2592000">30 天</option><option value="custom">自定义时间</option><option value="never">永久</option></select></label>
         <label v-if="batchShareExpiryPreset === 'custom'" class="field batch-share-custom-expiry"><span>失效时间</span><input v-model="batchShareExpiryAt" type="datetime-local" /></label>
       </div>
       <p v-if="batchShareScope === 'gpt_registered'" class="muted batch-share-hint">包含黄色“GPT 已注册”和绿色“GPT 已确认”状态；只选择启用邮箱，数量不足时不会生成部分链接。</p>
-      <p v-else class="muted batch-share-hint">只选择启用中的邮箱；创建时间缺失的邮箱会排在最后。数量不足时不会生成部分链接。</p>
+      <p v-else class="muted batch-share-hint">只包含尚未检测到 GPT 注册状态的启用邮箱；数量不足时不会生成部分链接。</p>
       <p v-if="batchShareError" class="message error">{{ batchShareError }}</p>
       <div v-if="batchShareResults.length" class="batch-share-results">
         <div class="batch-share-result-heading"><strong>已生成 {{ batchShareResults.length }} 个取件地址</strong><button class="button ghost" @click="downloadBatchShareTXT"><Download :size="15" />下载 TXT</button></div>

@@ -592,14 +592,14 @@ func (api *routeAPI) createShareLink(w http.ResponseWriter, r *http.Request) {
 
 func (api *routeAPI) createBatchShareLinks(w http.ResponseWriter, r *http.Request) {
 	const (
-		batchShareScopeAll           = "all"
-		batchShareScopeGPTRegistered = "gpt_registered"
+		batchShareScopeGPTRegistered   = "gpt_registered"
+		batchShareScopeGPTUnregistered = "gpt_unregistered"
 	)
 	payload := struct {
 		Count            int    `json:"count"`
 		ExpiresInSeconds *int   `json:"expiresInSeconds"`
 		Scope            string `json:"scope"`
-	}{Count: 1, ExpiresInSeconds: func() *int { value := 7 * 24 * 60 * 60; return &value }(), Scope: batchShareScopeAll}
+	}{Count: 1, ExpiresInSeconds: func() *int { value := 7 * 24 * 60 * 60; return &value }(), Scope: batchShareScopeGPTRegistered}
 	if r.ContentLength != 0 {
 		if err := httpx.DecodeJSON(w, r, &payload, 64<<10); err != nil {
 			httpx.WriteError(w, r, http.StatusBadRequest, "BAD_REQUEST", err.Error())
@@ -612,10 +612,10 @@ func (api *routeAPI) createBatchShareLinks(w http.ResponseWriter, r *http.Reques
 	}
 	payload.Scope = strings.ToLower(strings.TrimSpace(payload.Scope))
 	if payload.Scope == "" {
-		payload.Scope = batchShareScopeAll
+		payload.Scope = batchShareScopeGPTRegistered
 	}
-	if payload.Scope != batchShareScopeAll && payload.Scope != batchShareScopeGPTRegistered {
-		httpx.WriteError(w, r, http.StatusBadRequest, "BAD_REQUEST", "scope 必须是 all 或 gpt_registered")
+	if payload.Scope != batchShareScopeGPTRegistered && payload.Scope != batchShareScopeGPTUnregistered {
+		httpx.WriteError(w, r, http.StatusBadRequest, "BAD_REQUEST", "scope 必须是 gpt_registered 或 gpt_unregistered")
 		return
 	}
 	aliases, err := api.sessionFor(r).ListAliases(r.Context())
@@ -623,11 +623,9 @@ func (api *routeAPI) createBatchShareLinks(w http.ResponseWriter, r *http.Reques
 		api.writeMailError(w, r, err)
 		return
 	}
-	if payload.Scope == batchShareScopeGPTRegistered {
-		if err := api.mailboxFor(r).EnrichAliasApplications(r.Context(), aliases); err != nil {
-			httpx.WriteError(w, r, http.StatusInternalServerError, "APP_STATE_ERROR", "读取邮箱应用状态失败")
-			return
-		}
+	if err := api.mailboxFor(r).EnrichAliasApplications(r.Context(), aliases); err != nil {
+		httpx.WriteError(w, r, http.StatusInternalServerError, "APP_STATE_ERROR", "读取邮箱应用状态失败")
+		return
 	}
 	type candidate struct {
 		alias     string
@@ -640,7 +638,11 @@ func (api *routeAPI) createBatchShareLinks(w http.ResponseWriter, r *http.Reques
 		if active, ok := raw["isActive"].(bool); ok && !active {
 			continue
 		}
-		if payload.Scope == batchShareScopeGPTRegistered && !aliasHasRegisteredGPT(raw) {
+		registeredGPT := aliasHasRegisteredGPT(raw)
+		if payload.Scope == batchShareScopeGPTRegistered && !registeredGPT {
+			continue
+		}
+		if payload.Scope == batchShareScopeGPTUnregistered && registeredGPT {
 			continue
 		}
 		alias := shareAlias(fmt.Sprint(raw["hme"]))
@@ -668,7 +670,7 @@ func (api *routeAPI) createBatchShareLinks(w http.ResponseWriter, r *http.Reques
 		return left.createdAt < right.createdAt
 	})
 	if payload.Count > len(candidates) {
-		description := "启用邮箱"
+		description := "未注册 GPT 的启用邮箱"
 		if payload.Scope == batchShareScopeGPTRegistered {
 			description = "已注册 GPT 的启用邮箱"
 		}
