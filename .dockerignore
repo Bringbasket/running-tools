@@ -1,8 +1,17 @@
 .git
 .github
 .env
+.tmp
+actions-log
 data
+coverage
 frontend/node_modules
+frontend/test-results
+internal/webui/dist
+package-lock.json
+server
+server.exe
+*.log
 **/*_test.go
 **/*.spec.ts
 docs

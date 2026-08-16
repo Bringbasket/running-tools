@@ -28,7 +28,7 @@ func Load() (Config, error) {
 		TrustProxy:     envBool("RUNNING_TRUST_PROXY", false),
 		DataDir:        filepath.Clean(dataDir),
 		Version:        envOr("RUNNING_REVISION", envOr("RUNNING_VERSION", "0.0.1")),
-		RepositoryURL:  envOr("RUNNING_REPOSITORY_URL", "https://github.com/Bringbasket/running-tools"),
+		RepositoryURL:  envOr("RUNNING_REPOSITORY_URL", "https://github.com/Bringbasket/hme-tools"),
 	}
 	if cfg.AdminUsername == "" || len(cfg.AdminUsername) > 64 {
 		return Config{}, fmt.Errorf("RUNNING_ADMIN_USERNAME is invalid")

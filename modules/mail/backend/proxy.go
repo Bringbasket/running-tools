@@ -24,7 +24,7 @@ const (
 	defaultProxyTestTarget = "https://www.icloud.com/"
 	proxyTestTimeout       = 15 * time.Second
 	proxyTestResponseLimit = 4 << 10
-	proxyTestUserAgent     = "Mozilla/5.0 (compatible; RunningTools/1.0; +https://github.com/Bringbasket/running-tools)"
+	proxyTestUserAgent     = "Mozilla/5.0 (compatible; RunningTools/1.0; +https://github.com/Bringbasket/hme-tools)"
 )
 
 type ProxyTestResult struct {

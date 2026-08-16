@@ -1,10 +1,15 @@
 .env
 /package-lock.json
+/.tmp/
+/actions-log/
+/server
+/running-tools
 data/
 data-runtime-*/
 dist/
 coverage/
 frontend/node_modules/
+frontend/test-results/
 internal/webui/dist/assets/
 *.log
 *.tmp
