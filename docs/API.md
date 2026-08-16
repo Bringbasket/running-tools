@@ -155,12 +155,40 @@ X-Mail-Account-ID: default
 `safeHtml`。
 
 删除母号会先停止该账号的 Session 自动刷新、自动创建、批量队列和 IMAP Worker，再永久清理
-PostgreSQL 中对应的 Session/任务状态、邮件缓存、分享链接和使用日志。默认账号 `default`
+PostgreSQL 中对应的 Session/任务状态、邮件缓存、应用识别状态、分享链接和使用日志。默认账号 `default`
 承载旧数据兼容，接口会拒绝删除。该操作不可恢复，且不会影响其他母号的后台任务。
 
 账号列表返回 `status`、`statusMessage`、`icloudWeb`、`appleAccount`、`mailbox`、自动刷新、
 自动创建、批量队列和 `aliasCount` 健康摘要。`status` 为 `active`、`warning`、`pending`
 或 `error`。这些状态从各账号当前运行态实时汇总，不另存一份会过期的健康数据。
+
+### 已注册应用识别
+
+`GET /api/mail/v1/aliases` 为每个邮箱附加 `registeredApps`，没有识别结果时固定返回空数组：
+
+```json
+{
+  "hme": "example@icloud.com",
+  "registeredApps": [
+    {
+      "key": "gpt",
+      "label": "GPT",
+      "status": "observed",
+      "detectedAt": 1786874400
+    }
+  ]
+}
+```
+
+`observed` 表示可信 OpenAI 发件人发送了 `Your temporary ChatGPT verification code` 或对应
+OpenAI 主题，前端显示黄色“GPT 已注册”。只有同一邮箱随后收到 `Your temporary ChatGPT login
+code`、`Your temporary OpenAI login code`，或收到 `Welcome to ChatGPT`、`Your first chat was
+just the beginning` 等明确后续邮件时，状态才升级为 `confirmed`，前端显示绿色“GPT 已确认”。
+
+识别同时校验主题和发件人。支持 OpenAI 原始域名以及 iCloud 隐藏邮箱转发后编码的
+`otp_at_tm1_openai_com...@icloud.com`、`noreply_at_tm_openai_com...@icloud.com`；仅出现
+`noreply@tm.openai.com`、工作区邀请或其他普通通知不会标记。状态按 `account_id + alias + app_key`
+隔离并写入 PostgreSQL。清理邮件缓存不会删除识别结果，删除隐私邮箱或母号时才会清理。
 
 独立代理请求示例：
 

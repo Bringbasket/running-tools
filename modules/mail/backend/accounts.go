@@ -315,6 +315,7 @@ func (module *Module) deleteAccount(ctx context.Context, id string) error {
 		}{
 			{`DELETE FROM mail_share_sessions WHERE account_id = $1`, []any{id}},
 			{`DELETE FROM mail_share_links WHERE account_id = $1`, []any{id}},
+			{`DELETE FROM mail_alias_app_states WHERE account_id = $1`, []any{id}},
 			{`DELETE FROM mailbox_hidden_messages WHERE account_id = $1`, []any{id}},
 			{`DELETE FROM mailbox_messages WHERE account_id = $1`, []any{id}},
 			{`DELETE FROM mailbox_sync_states WHERE account_id = $1`, []any{id}},

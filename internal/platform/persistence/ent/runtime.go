@@ -10,6 +10,7 @@ import (
 	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/authloginevent"
 	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/authsession"
 	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/authuser"
+	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/mailaliasappstate"
 	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/mailboxhiddenmessage"
 	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/mailboxmessage"
 	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/mailboxsyncstate"
@@ -326,6 +327,110 @@ func init() {
 	authuser.DefaultUpdatedAt = authuserDescUpdatedAt.Default.(func() time.Time)
 	// authuser.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
 	authuser.UpdateDefaultUpdatedAt = authuserDescUpdatedAt.UpdateDefault.(func() time.Time)
+	mailaliasappstateFields := schema.MailAliasAppState{}.Fields()
+	_ = mailaliasappstateFields
+	// mailaliasappstateDescAccountID is the schema descriptor for account_id field.
+	mailaliasappstateDescAccountID := mailaliasappstateFields[0].Descriptor()
+	// mailaliasappstate.DefaultAccountID holds the default value on creation for the account_id field.
+	mailaliasappstate.DefaultAccountID = mailaliasappstateDescAccountID.Default.(string)
+	// mailaliasappstate.AccountIDValidator is a validator for the "account_id" field. It is called by the builders before save.
+	mailaliasappstate.AccountIDValidator = mailaliasappstateDescAccountID.Validators[0].(func(string) error)
+	// mailaliasappstateDescAlias is the schema descriptor for alias field.
+	mailaliasappstateDescAlias := mailaliasappstateFields[1].Descriptor()
+	// mailaliasappstate.AliasValidator is a validator for the "alias" field. It is called by the builders before save.
+	mailaliasappstate.AliasValidator = func() func(string) error {
+		validators := mailaliasappstateDescAlias.Validators
+		fns := [...]func(string) error{
+			validators[0].(func(string) error),
+			validators[1].(func(string) error),
+		}
+		return func(alias string) error {
+			for _, fn := range fns {
+				if err := fn(alias); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}()
+	// mailaliasappstateDescAppKey is the schema descriptor for app_key field.
+	mailaliasappstateDescAppKey := mailaliasappstateFields[2].Descriptor()
+	// mailaliasappstate.AppKeyValidator is a validator for the "app_key" field. It is called by the builders before save.
+	mailaliasappstate.AppKeyValidator = func() func(string) error {
+		validators := mailaliasappstateDescAppKey.Validators
+		fns := [...]func(string) error{
+			validators[0].(func(string) error),
+			validators[1].(func(string) error),
+		}
+		return func(app_key string) error {
+			for _, fn := range fns {
+				if err := fn(app_key); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}()
+	// mailaliasappstateDescStatus is the schema descriptor for status field.
+	mailaliasappstateDescStatus := mailaliasappstateFields[3].Descriptor()
+	// mailaliasappstate.StatusValidator is a validator for the "status" field. It is called by the builders before save.
+	mailaliasappstate.StatusValidator = func() func(string) error {
+		validators := mailaliasappstateDescStatus.Validators
+		fns := [...]func(string) error{
+			validators[0].(func(string) error),
+			validators[1].(func(string) error),
+		}
+		return func(status string) error {
+			for _, fn := range fns {
+				if err := fn(status); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}()
+	// mailaliasappstateDescDetectedUID is the schema descriptor for detected_uid field.
+	mailaliasappstateDescDetectedUID := mailaliasappstateFields[5].Descriptor()
+	// mailaliasappstate.DefaultDetectedUID holds the default value on creation for the detected_uid field.
+	mailaliasappstate.DefaultDetectedUID = mailaliasappstateDescDetectedUID.Default.(uint64)
+	// mailaliasappstateDescDetectedSubject is the schema descriptor for detected_subject field.
+	mailaliasappstateDescDetectedSubject := mailaliasappstateFields[6].Descriptor()
+	// mailaliasappstate.DefaultDetectedSubject holds the default value on creation for the detected_subject field.
+	mailaliasappstate.DefaultDetectedSubject = mailaliasappstateDescDetectedSubject.Default.(string)
+	// mailaliasappstate.DetectedSubjectValidator is a validator for the "detected_subject" field. It is called by the builders before save.
+	mailaliasappstate.DetectedSubjectValidator = mailaliasappstateDescDetectedSubject.Validators[0].(func(string) error)
+	// mailaliasappstateDescDetectedSender is the schema descriptor for detected_sender field.
+	mailaliasappstateDescDetectedSender := mailaliasappstateFields[7].Descriptor()
+	// mailaliasappstate.DefaultDetectedSender holds the default value on creation for the detected_sender field.
+	mailaliasappstate.DefaultDetectedSender = mailaliasappstateDescDetectedSender.Default.(string)
+	// mailaliasappstate.DetectedSenderValidator is a validator for the "detected_sender" field. It is called by the builders before save.
+	mailaliasappstate.DetectedSenderValidator = mailaliasappstateDescDetectedSender.Validators[0].(func(string) error)
+	// mailaliasappstateDescConfirmedUID is the schema descriptor for confirmed_uid field.
+	mailaliasappstateDescConfirmedUID := mailaliasappstateFields[9].Descriptor()
+	// mailaliasappstate.DefaultConfirmedUID holds the default value on creation for the confirmed_uid field.
+	mailaliasappstate.DefaultConfirmedUID = mailaliasappstateDescConfirmedUID.Default.(uint64)
+	// mailaliasappstateDescConfirmedSubject is the schema descriptor for confirmed_subject field.
+	mailaliasappstateDescConfirmedSubject := mailaliasappstateFields[10].Descriptor()
+	// mailaliasappstate.DefaultConfirmedSubject holds the default value on creation for the confirmed_subject field.
+	mailaliasappstate.DefaultConfirmedSubject = mailaliasappstateDescConfirmedSubject.Default.(string)
+	// mailaliasappstate.ConfirmedSubjectValidator is a validator for the "confirmed_subject" field. It is called by the builders before save.
+	mailaliasappstate.ConfirmedSubjectValidator = mailaliasappstateDescConfirmedSubject.Validators[0].(func(string) error)
+	// mailaliasappstateDescConfirmedSender is the schema descriptor for confirmed_sender field.
+	mailaliasappstateDescConfirmedSender := mailaliasappstateFields[11].Descriptor()
+	// mailaliasappstate.DefaultConfirmedSender holds the default value on creation for the confirmed_sender field.
+	mailaliasappstate.DefaultConfirmedSender = mailaliasappstateDescConfirmedSender.Default.(string)
+	// mailaliasappstate.ConfirmedSenderValidator is a validator for the "confirmed_sender" field. It is called by the builders before save.
+	mailaliasappstate.ConfirmedSenderValidator = mailaliasappstateDescConfirmedSender.Validators[0].(func(string) error)
+	// mailaliasappstateDescCreatedAt is the schema descriptor for created_at field.
+	mailaliasappstateDescCreatedAt := mailaliasappstateFields[12].Descriptor()
+	// mailaliasappstate.DefaultCreatedAt holds the default value on creation for the created_at field.
+	mailaliasappstate.DefaultCreatedAt = mailaliasappstateDescCreatedAt.Default.(func() time.Time)
+	// mailaliasappstateDescUpdatedAt is the schema descriptor for updated_at field.
+	mailaliasappstateDescUpdatedAt := mailaliasappstateFields[13].Descriptor()
+	// mailaliasappstate.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	mailaliasappstate.DefaultUpdatedAt = mailaliasappstateDescUpdatedAt.Default.(func() time.Time)
+	// mailaliasappstate.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	mailaliasappstate.UpdateDefaultUpdatedAt = mailaliasappstateDescUpdatedAt.UpdateDefault.(func() time.Time)
 	mailboxhiddenmessageFields := schema.MailboxHiddenMessage{}.Fields()
 	_ = mailboxhiddenmessageFields
 	// mailboxhiddenmessageDescAccountID is the schema descriptor for account_id field.

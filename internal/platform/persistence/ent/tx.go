@@ -22,6 +22,8 @@ type Tx struct {
 	AuthSession *AuthSessionClient
 	// AuthUser is the client for interacting with the AuthUser builders.
 	AuthUser *AuthUserClient
+	// MailAliasAppState is the client for interacting with the MailAliasAppState builders.
+	MailAliasAppState *MailAliasAppStateClient
 	// MailboxHiddenMessage is the client for interacting with the MailboxHiddenMessage builders.
 	MailboxHiddenMessage *MailboxHiddenMessageClient
 	// MailboxMessage is the client for interacting with the MailboxMessage builders.
@@ -164,6 +166,7 @@ func (tx *Tx) init() {
 	tx.AuthLoginEvent = NewAuthLoginEventClient(tx.config)
 	tx.AuthSession = NewAuthSessionClient(tx.config)
 	tx.AuthUser = NewAuthUserClient(tx.config)
+	tx.MailAliasAppState = NewMailAliasAppStateClient(tx.config)
 	tx.MailboxHiddenMessage = NewMailboxHiddenMessageClient(tx.config)
 	tx.MailboxMessage = NewMailboxMessageClient(tx.config)
 	tx.MailboxSyncState = NewMailboxSyncStateClient(tx.config)

@@ -17,6 +17,7 @@ import (
 	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/authloginevent"
 	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/authsession"
 	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/authuser"
+	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/mailaliasappstate"
 	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/mailboxhiddenmessage"
 	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/mailboxmessage"
 	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/mailboxsyncstate"
@@ -85,6 +86,7 @@ func checkColumn(t, c string) error {
 			authloginevent.Table:       authloginevent.ValidColumn,
 			authsession.Table:          authsession.ValidColumn,
 			authuser.Table:             authuser.ValidColumn,
+			mailaliasappstate.Table:    mailaliasappstate.ValidColumn,
 			mailboxhiddenmessage.Table: mailboxhiddenmessage.ValidColumn,
 			mailboxmessage.Table:       mailboxmessage.ValidColumn,
 			mailboxsyncstate.Table:     mailboxsyncstate.ValidColumn,

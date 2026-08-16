@@ -87,6 +87,7 @@ type MailboxService struct {
 	workerRunning bool
 	workerMode    string
 	repository    mailboxRepository
+	applications  aliasApplicationStore
 	persistence   *persistence.Service
 	accountID     string
 	lastCache     mailboxCache
@@ -150,6 +151,9 @@ func NewMailboxServiceWithPersistenceForAccount(stateDir, accountID string, sess
 	service.repository = repository
 	service.persistence = persistenceService
 	service.accountID = accountID
+	if persistenceService != nil && persistenceService.Ent() != nil {
+		service.applications = &postgresAliasApplicationStore{client: persistenceService.Ent(), accountID: accountID}
+	}
 	return service, nil
 }
 func (s *MailboxService) Start() {
@@ -173,6 +177,13 @@ func (s *MailboxService) Start() {
 			s.mu.Unlock()
 			close(done)
 		}()
+		if s.applications != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			if err := s.applications.Backfill(ctx); err != nil {
+				slog.Warn("历史邮件应用状态回填失败", "account_id", s.accountID, "error", safeErrorText(err))
+			}
+			cancel()
+		}
 		for {
 			if mailboxStopRequested(stop) {
 				return
@@ -407,6 +418,33 @@ func (s *MailboxService) Status() MailboxStatus {
 }
 func (s *MailboxService) Messages(alias string, limit int) map[string]any {
 	return s.messages(alias, limit, false)
+}
+
+func (s *MailboxService) EnrichAliasApplications(ctx context.Context, aliases []map[string]any) error {
+	states := map[string][]AliasApplication{}
+	if s.applications != nil {
+		var err error
+		states, err = s.applications.List(ctx)
+		if err != nil {
+			return err
+		}
+	}
+	for _, alias := range aliases {
+		address := strings.ToLower(strings.TrimSpace(fmt.Sprint(alias["hme"])))
+		items := states[address]
+		if items == nil {
+			items = []AliasApplication{}
+		}
+		alias["registeredApps"] = items
+	}
+	return nil
+}
+
+func (s *MailboxService) DeleteAliasApplications(ctx context.Context, alias string) error {
+	if s.applications == nil {
+		return nil
+	}
+	return s.applications.DeleteAlias(ctx, alias)
 }
 
 // MessagesDetailed is used by read-only share pages that render the message
@@ -759,6 +797,13 @@ func (s *MailboxService) RunSync(aliases []string) (MailboxStatus, error) {
 	}
 	if saveErr != nil {
 		return cache.Status, saveErr
+	}
+	if s.applications != nil && len(messages) > 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		if err := s.applications.ObserveMessages(ctx, messages); err != nil {
+			slog.Warn("新邮件应用状态识别失败", "account_id", s.accountID, "count", len(messages), "error", safeErrorText(err))
+		}
+		cancel()
 	}
 	if changed {
 		s.notifyRevisionLocked()

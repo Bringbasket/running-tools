@@ -1,6 +1,7 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import AliasesPage from './AliasesPage.vue'
+import type { MailAlias } from '../types'
 
 const mocks = vi.hoisted(() => ({
   aliases: vi.fn(),
@@ -20,7 +21,7 @@ vi.mock('../api', () => ({
   },
 }))
 
-function aliases(count: number) {
+function aliases(count: number): MailAlias[] {
   return Array.from({ length: count }, (_, index) => ({
     anonymousId: `id-${index + 1}`,
     hme: `alias-${index + 1}@icloud.com`,
@@ -72,6 +73,31 @@ describe('邮箱列表分页', () => {
     expect(wrapper.findAll('tbody tr')).toHaveLength(1)
     expect(wrapper.get('.pagination-bar strong').text()).toBe('第 1 / 1 页')
 
+    wrapper.unmount()
+  })
+
+  it('区分注册验证码和后续确认邮件的 GPT 状态', async () => {
+    const items = aliases(2)
+    items[0].registeredApps = [{ key: 'gpt', label: 'GPT', status: 'observed', detectedAt: 1786500000 }]
+    items[1].registeredApps = [{ key: 'gpt', label: 'GPT', status: 'confirmed', detectedAt: 1786500000, confirmedAt: 1786500600 }]
+    mocks.aliases.mockResolvedValue(items)
+    mocks.createSchedule.mockResolvedValue({
+      enabled: false, running: false, batchSize: 5, aliasIntervalSeconds: 3,
+      intervalSeconds: 180, label: 'shopping', note: '',
+    })
+    const wrapper = mount(AliasesPage)
+    await flushPromises()
+
+    const badges = wrapper.findAll('.app-badge')
+    expect(badges).toHaveLength(2)
+    expect(badges[0].classes()).toContain('observed')
+    expect(badges[0].text()).toContain('GPT已注册')
+    expect(badges[1].classes()).toContain('confirmed')
+    expect(badges[1].text()).toContain('GPT已确认')
+
+    await wrapper.get('.search-field input').setValue('已确认')
+    expect(wrapper.findAll('tbody tr')).toHaveLength(1)
+    expect(wrapper.get('tbody tr').text()).toContain('alias-2@icloud.com')
     wrapper.unmount()
   })
 

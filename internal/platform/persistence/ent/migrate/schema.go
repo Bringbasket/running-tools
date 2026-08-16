@@ -158,6 +158,42 @@ var (
 			},
 		},
 	}
+	// MailAliasAppStatesColumns holds the columns for the "mail_alias_app_states" table.
+	MailAliasAppStatesColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt, Increment: true},
+		{Name: "account_id", Type: field.TypeString, Size: 64, Default: "default"},
+		{Name: "alias", Type: field.TypeString, Size: 320},
+		{Name: "app_key", Type: field.TypeString, Size: 64},
+		{Name: "status", Type: field.TypeString, Size: 24},
+		{Name: "detected_at", Type: field.TypeTime, Nullable: true},
+		{Name: "detected_uid", Type: field.TypeUint64, Default: 0},
+		{Name: "detected_subject", Type: field.TypeString, Size: 500, Default: ""},
+		{Name: "detected_sender", Type: field.TypeString, Size: 1000, Default: ""},
+		{Name: "confirmed_at", Type: field.TypeTime, Nullable: true},
+		{Name: "confirmed_uid", Type: field.TypeUint64, Default: 0},
+		{Name: "confirmed_subject", Type: field.TypeString, Size: 500, Default: ""},
+		{Name: "confirmed_sender", Type: field.TypeString, Size: 1000, Default: ""},
+		{Name: "created_at", Type: field.TypeTime},
+		{Name: "updated_at", Type: field.TypeTime},
+	}
+	// MailAliasAppStatesTable holds the schema information for the "mail_alias_app_states" table.
+	MailAliasAppStatesTable = &schema.Table{
+		Name:       "mail_alias_app_states",
+		Columns:    MailAliasAppStatesColumns,
+		PrimaryKey: []*schema.Column{MailAliasAppStatesColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "mailaliasappstate_account_id_alias_app_key",
+				Unique:  true,
+				Columns: []*schema.Column{MailAliasAppStatesColumns[1], MailAliasAppStatesColumns[2], MailAliasAppStatesColumns[3]},
+			},
+			{
+				Name:    "mailaliasappstate_account_id_status_updated_at",
+				Unique:  false,
+				Columns: []*schema.Column{MailAliasAppStatesColumns[1], MailAliasAppStatesColumns[4], MailAliasAppStatesColumns[14]},
+			},
+		},
+	}
 	// MailboxHiddenMessagesColumns holds the columns for the "mailbox_hidden_messages" table.
 	MailboxHiddenMessagesColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt, Increment: true},
@@ -246,6 +282,7 @@ var (
 		AuthLoginEventsTable,
 		AuthSessionsTable,
 		AuthUsersTable,
+		MailAliasAppStatesTable,
 		MailboxHiddenMessagesTable,
 		MailboxMessagesTable,
 		MailboxSyncStatesTable,

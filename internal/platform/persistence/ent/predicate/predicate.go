@@ -21,6 +21,9 @@ type AuthSession func(*sql.Selector)
 // AuthUser is the predicate function for authuser builders.
 type AuthUser func(*sql.Selector)
 
+// MailAliasAppState is the predicate function for mailaliasappstate builders.
+type MailAliasAppState func(*sql.Selector)
+
 // MailboxHiddenMessage is the predicate function for mailboxhiddenmessage builders.
 type MailboxHiddenMessage func(*sql.Selector)
 

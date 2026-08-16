@@ -12,6 +12,15 @@ export interface MailAlias {
 	fallbackUsed?: boolean
 	detailConfirmed?: boolean
 	nextRetryAt?: number | null
+	registeredApps?: AliasRegisteredApplication[]
+}
+
+export interface AliasRegisteredApplication {
+  key: string
+  label: string
+  status: 'observed' | 'confirmed'
+  detectedAt?: number
+  confirmedAt?: number
 }
 
 export type ActivityLogLevel = 'info' | 'warning' | 'error'

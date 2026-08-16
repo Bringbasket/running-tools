@@ -69,6 +69,18 @@ func (f AuthUserFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, er
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.AuthUserMutation", m)
 }
 
+// The MailAliasAppStateFunc type is an adapter to allow the use of ordinary
+// function as MailAliasAppState mutator.
+type MailAliasAppStateFunc func(context.Context, *ent.MailAliasAppStateMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f MailAliasAppStateFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.MailAliasAppStateMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.MailAliasAppStateMutation", m)
+}
+
 // The MailboxHiddenMessageFunc type is an adapter to allow the use of ordinary
 // function as MailboxHiddenMessage mutator.
 type MailboxHiddenMessageFunc func(context.Context, *ent.MailboxHiddenMessageMutation) (ent.Value, error)

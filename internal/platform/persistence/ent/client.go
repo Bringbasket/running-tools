@@ -19,6 +19,7 @@ import (
 	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/authloginevent"
 	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/authsession"
 	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/authuser"
+	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/mailaliasappstate"
 	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/mailboxhiddenmessage"
 	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/mailboxmessage"
 	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/mailboxsyncstate"
@@ -39,6 +40,8 @@ type Client struct {
 	AuthSession *AuthSessionClient
 	// AuthUser is the client for interacting with the AuthUser builders.
 	AuthUser *AuthUserClient
+	// MailAliasAppState is the client for interacting with the MailAliasAppState builders.
+	MailAliasAppState *MailAliasAppStateClient
 	// MailboxHiddenMessage is the client for interacting with the MailboxHiddenMessage builders.
 	MailboxHiddenMessage *MailboxHiddenMessageClient
 	// MailboxMessage is the client for interacting with the MailboxMessage builders.
@@ -61,6 +64,7 @@ func (c *Client) init() {
 	c.AuthLoginEvent = NewAuthLoginEventClient(c.config)
 	c.AuthSession = NewAuthSessionClient(c.config)
 	c.AuthUser = NewAuthUserClient(c.config)
+	c.MailAliasAppState = NewMailAliasAppStateClient(c.config)
 	c.MailboxHiddenMessage = NewMailboxHiddenMessageClient(c.config)
 	c.MailboxMessage = NewMailboxMessageClient(c.config)
 	c.MailboxSyncState = NewMailboxSyncStateClient(c.config)
@@ -161,6 +165,7 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 		AuthLoginEvent:       NewAuthLoginEventClient(cfg),
 		AuthSession:          NewAuthSessionClient(cfg),
 		AuthUser:             NewAuthUserClient(cfg),
+		MailAliasAppState:    NewMailAliasAppStateClient(cfg),
 		MailboxHiddenMessage: NewMailboxHiddenMessageClient(cfg),
 		MailboxMessage:       NewMailboxMessageClient(cfg),
 		MailboxSyncState:     NewMailboxSyncStateClient(cfg),
@@ -188,6 +193,7 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 		AuthLoginEvent:       NewAuthLoginEventClient(cfg),
 		AuthSession:          NewAuthSessionClient(cfg),
 		AuthUser:             NewAuthUserClient(cfg),
+		MailAliasAppState:    NewMailAliasAppStateClient(cfg),
 		MailboxHiddenMessage: NewMailboxHiddenMessageClient(cfg),
 		MailboxMessage:       NewMailboxMessageClient(cfg),
 		MailboxSyncState:     NewMailboxSyncStateClient(cfg),
@@ -221,7 +227,8 @@ func (c *Client) Close() error {
 func (c *Client) Use(hooks ...Hook) {
 	for _, n := range []interface{ Use(...Hook) }{
 		c.ActivityLog, c.AuthAPIToken, c.AuthLoginEvent, c.AuthSession, c.AuthUser,
-		c.MailboxHiddenMessage, c.MailboxMessage, c.MailboxSyncState,
+		c.MailAliasAppState, c.MailboxHiddenMessage, c.MailboxMessage,
+		c.MailboxSyncState,
 	} {
 		n.Use(hooks...)
 	}
@@ -232,7 +239,8 @@ func (c *Client) Use(hooks ...Hook) {
 func (c *Client) Intercept(interceptors ...Interceptor) {
 	for _, n := range []interface{ Intercept(...Interceptor) }{
 		c.ActivityLog, c.AuthAPIToken, c.AuthLoginEvent, c.AuthSession, c.AuthUser,
-		c.MailboxHiddenMessage, c.MailboxMessage, c.MailboxSyncState,
+		c.MailAliasAppState, c.MailboxHiddenMessage, c.MailboxMessage,
+		c.MailboxSyncState,
 	} {
 		n.Intercept(interceptors...)
 	}
@@ -251,6 +259,8 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 		return c.AuthSession.mutate(ctx, m)
 	case *AuthUserMutation:
 		return c.AuthUser.mutate(ctx, m)
+	case *MailAliasAppStateMutation:
+		return c.MailAliasAppState.mutate(ctx, m)
 	case *MailboxHiddenMessageMutation:
 		return c.MailboxHiddenMessage.mutate(ctx, m)
 	case *MailboxMessageMutation:
@@ -927,6 +937,139 @@ func (c *AuthUserClient) mutate(ctx context.Context, m *AuthUserMutation) (Value
 	}
 }
 
+// MailAliasAppStateClient is a client for the MailAliasAppState schema.
+type MailAliasAppStateClient struct {
+	config
+}
+
+// NewMailAliasAppStateClient returns a client for the MailAliasAppState from the given config.
+func NewMailAliasAppStateClient(c config) *MailAliasAppStateClient {
+	return &MailAliasAppStateClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `mailaliasappstate.Hooks(f(g(h())))`.
+func (c *MailAliasAppStateClient) Use(hooks ...Hook) {
+	c.hooks.MailAliasAppState = append(c.hooks.MailAliasAppState, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `mailaliasappstate.Intercept(f(g(h())))`.
+func (c *MailAliasAppStateClient) Intercept(interceptors ...Interceptor) {
+	c.inters.MailAliasAppState = append(c.inters.MailAliasAppState, interceptors...)
+}
+
+// Create returns a builder for creating a MailAliasAppState entity.
+func (c *MailAliasAppStateClient) Create() *MailAliasAppStateCreate {
+	mutation := newMailAliasAppStateMutation(c.config, OpCreate)
+	return &MailAliasAppStateCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of MailAliasAppState entities.
+func (c *MailAliasAppStateClient) CreateBulk(builders ...*MailAliasAppStateCreate) *MailAliasAppStateCreateBulk {
+	return &MailAliasAppStateCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *MailAliasAppStateClient) MapCreateBulk(slice any, setFunc func(*MailAliasAppStateCreate, int)) *MailAliasAppStateCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &MailAliasAppStateCreateBulk{err: fmt.Errorf("calling to MailAliasAppStateClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*MailAliasAppStateCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &MailAliasAppStateCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for MailAliasAppState.
+func (c *MailAliasAppStateClient) Update() *MailAliasAppStateUpdate {
+	mutation := newMailAliasAppStateMutation(c.config, OpUpdate)
+	return &MailAliasAppStateUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *MailAliasAppStateClient) UpdateOne(_m *MailAliasAppState) *MailAliasAppStateUpdateOne {
+	mutation := newMailAliasAppStateMutation(c.config, OpUpdateOne, withMailAliasAppState(_m))
+	return &MailAliasAppStateUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *MailAliasAppStateClient) UpdateOneID(id int) *MailAliasAppStateUpdateOne {
+	mutation := newMailAliasAppStateMutation(c.config, OpUpdateOne, withMailAliasAppStateID(id))
+	return &MailAliasAppStateUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for MailAliasAppState.
+func (c *MailAliasAppStateClient) Delete() *MailAliasAppStateDelete {
+	mutation := newMailAliasAppStateMutation(c.config, OpDelete)
+	return &MailAliasAppStateDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *MailAliasAppStateClient) DeleteOne(_m *MailAliasAppState) *MailAliasAppStateDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *MailAliasAppStateClient) DeleteOneID(id int) *MailAliasAppStateDeleteOne {
+	builder := c.Delete().Where(mailaliasappstate.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &MailAliasAppStateDeleteOne{builder}
+}
+
+// Query returns a query builder for MailAliasAppState.
+func (c *MailAliasAppStateClient) Query() *MailAliasAppStateQuery {
+	return &MailAliasAppStateQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeMailAliasAppState},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a MailAliasAppState entity by its id.
+func (c *MailAliasAppStateClient) Get(ctx context.Context, id int) (*MailAliasAppState, error) {
+	return c.Query().Where(mailaliasappstate.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *MailAliasAppStateClient) GetX(ctx context.Context, id int) *MailAliasAppState {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *MailAliasAppStateClient) Hooks() []Hook {
+	return c.hooks.MailAliasAppState
+}
+
+// Interceptors returns the client interceptors.
+func (c *MailAliasAppStateClient) Interceptors() []Interceptor {
+	return c.inters.MailAliasAppState
+}
+
+func (c *MailAliasAppStateClient) mutate(ctx context.Context, m *MailAliasAppStateMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&MailAliasAppStateCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&MailAliasAppStateUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&MailAliasAppStateUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&MailAliasAppStateDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown MailAliasAppState mutation op: %q", m.Op())
+	}
+}
+
 // MailboxHiddenMessageClient is a client for the MailboxHiddenMessage schema.
 type MailboxHiddenMessageClient struct {
 	config
@@ -1330,10 +1473,12 @@ func (c *MailboxSyncStateClient) mutate(ctx context.Context, m *MailboxSyncState
 type (
 	hooks struct {
 		ActivityLog, AuthAPIToken, AuthLoginEvent, AuthSession, AuthUser,
-		MailboxHiddenMessage, MailboxMessage, MailboxSyncState []ent.Hook
+		MailAliasAppState, MailboxHiddenMessage, MailboxMessage,
+		MailboxSyncState []ent.Hook
 	}
 	inters struct {
 		ActivityLog, AuthAPIToken, AuthLoginEvent, AuthSession, AuthUser,
-		MailboxHiddenMessage, MailboxMessage, MailboxSyncState []ent.Interceptor
+		MailAliasAppState, MailboxHiddenMessage, MailboxMessage,
+		MailboxSyncState []ent.Interceptor
 	}
 )

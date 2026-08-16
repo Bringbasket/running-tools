@@ -65,7 +65,8 @@ let previousScheduleRunning = false
 const visible = computed(() => aliases.value.filter((alias) => {
   if (state.value === 'active' && alias.isActive === false) return false
   if (state.value === 'inactive' && alias.isActive !== false) return false
-  const target = `${alias.hme} ${alias.label || ''} ${alias.note || ''} ${alias.forwardToEmail || ''}`.toLowerCase()
+  const applications = (alias.registeredApps || []).map((item) => `${item.key} ${item.label} ${item.status === 'confirmed' ? '已确认' : '已注册'}`).join(' ')
+  const target = `${alias.hme} ${alias.label || ''} ${alias.note || ''} ${alias.forwardToEmail || ''} ${applications}`.toLowerCase()
   return target.includes(query.value.toLowerCase())
 }))
 const activeCount = computed(() => aliases.value.filter((alias) => alias.isActive !== false).length)
@@ -356,7 +357,7 @@ onBeforeUnmount(() => {
       <div v-if="workspaceView === 'aliases'" class="aliases-pane">
         <p v-if="error" class="message error pane-message">{{ error }}</p>
         <div class="list-toolbar">
-          <label class="search-field"><Search :size="16" /><input v-model="query" placeholder="搜索邮箱、标签、备注或转发地址" /></label>
+          <label class="search-field"><Search :size="16" /><input v-model="query" placeholder="搜索邮箱、标签、应用或转发地址" /></label>
           <div class="segmented" aria-label="状态筛选"><button v-for="option in ['all', 'active', 'inactive'] as const" :key="option" :class="{ active: state === option }" @click="state = option">{{ { all: '全部', active: '启用', inactive: '停用' }[option] }}</button></div>
           <button class="button ghost export-button" title="批量取件" @click="openBatchShare"><MailPlus :size="16" /><span>批量取件</span></button>
           <button class="button ghost danger-action export-button" title="批量清理失效取件链接" :disabled="clearSharesLoading" @click="openClearShares(false)"><Trash2 :size="16" /><span>清理失效</span></button>
@@ -368,19 +369,27 @@ onBeforeUnmount(() => {
         </div>
         <div class="data-frame">
           <table>
-            <thead><tr><th>邮箱地址</th><th>标签 / 备注</th><th>转发到</th><th>状态</th><th>创建时间</th><th><span class="sr-only">操作</span></th></tr></thead>
+            <thead><tr><th>邮箱地址</th><th>标签 / 备注</th><th>转发到</th><th>状态</th><th>已注册应用</th><th>创建时间</th><th><span class="sr-only">操作</span></th></tr></thead>
             <tbody>
               <tr v-for="alias in pagedAliases" :key="alias.anonymousId">
                 <td data-label="邮箱地址"><strong class="address">{{ alias.hme }}</strong><small>{{ alias.origin || 'iCloud+' }}</small></td>
                 <td data-label="标签 / 备注"><span>{{ alias.label || '未命名' }}</span><small>{{ alias.note || '无备注' }}</small></td>
                 <td data-label="转发到"><span class="forward-address">{{ alias.forwardToEmail || '—' }}</span></td>
                 <td data-label="状态"><StatusBadge :state="alias.isActive === false ? 'inactive' : 'active'" :label="alias.isActive === false ? '已停用' : '转发中'" /></td>
+                <td data-label="已注册应用">
+                  <div v-if="alias.registeredApps?.length" class="app-badges">
+                    <span v-for="app in alias.registeredApps" :key="app.key" class="app-badge" :class="app.status" :title="app.status === 'confirmed' ? `${app.label}：已收到后续登录或欢迎邮件` : `${app.label}：已收到注册验证码`">
+                      <strong>{{ app.label }}</strong><small>{{ app.status === 'confirmed' ? '已确认' : '已注册' }}</small>
+                    </span>
+                  </div>
+                  <span v-else class="muted">—</span>
+                </td>
                 <td data-label="创建时间">{{ formatDate(alias.createTimestamp) }}</td>
                 <td class="row-actions"><LoaderCircle v-if="pendingID === alias.anonymousId" :size="18" class="spin" /><template v-else><a class="icon-button" :href="`/mail/mailbox?alias=${encodeURIComponent(alias.hme)}`" title="查看邮件" :aria-label="`查看 ${alias.hme} 的邮件`"><MailOpen :size="16" /></a><button class="icon-button" title="编辑标签和备注" @click="openEdit(alias)"><Pencil :size="16" /></button><button class="icon-button" title="生成分享链接" @click="openShare(alias)"><MailPlus :size="16" /></button><button class="icon-button" :title="alias.isActive === false ? '重新启用邮箱' : '停用邮箱'" @click="runAction(alias, alias.isActive === false ? 'enable' : 'disable')"><Power :size="16" /></button><button class="icon-button danger" title="删除邮箱" @click="runAction(alias, 'delete')"><Trash2 :size="16" /></button></template></td>
               </tr>
-              <tr v-if="loading && aliases.length === 0"><td colspan="6" class="empty-state"><AsyncState state="loading" title="正在读取邮箱" /></td></tr>
-              <tr v-else-if="error && aliases.length === 0"><td colspan="6" class="empty-state"><AsyncState state="error" title="邮箱列表加载失败" :detail="error" @retry="load" /></td></tr>
-              <tr v-else-if="visible.length === 0"><td colspan="6" class="empty-state"><AsyncState state="empty" title="没有符合条件的邮箱" detail="调整关键词或状态筛选后重试"><template #icon><MailOpen :size="28" /></template></AsyncState></td></tr>
+              <tr v-if="loading && aliases.length === 0"><td colspan="7" class="empty-state"><AsyncState state="loading" title="正在读取邮箱" /></td></tr>
+              <tr v-else-if="error && aliases.length === 0"><td colspan="7" class="empty-state"><AsyncState state="error" title="邮箱列表加载失败" :detail="error" @retry="load" /></td></tr>
+              <tr v-else-if="visible.length === 0"><td colspan="7" class="empty-state"><AsyncState state="empty" title="没有符合条件的邮箱" detail="调整关键词或状态筛选后重试"><template #icon><MailOpen :size="28" /></template></AsyncState></td></tr>
             </tbody>
           </table>
         </div>
@@ -493,6 +502,14 @@ onBeforeUnmount(() => {
 .pagination-bar > div { display: flex; align-items: center; gap: 9px; }
 .pagination-bar strong { min-width: 82px; color: var(--text); font-size: 11px; font-weight: 600; text-align: center; }
 .pagination-bar .icon-button { width: 31px; height: 31px; }
+.app-badges { display: flex; min-width: 112px; align-items: center; gap: 6px; flex-wrap: wrap; }
+.app-badge { display: inline-flex; min-height: 27px; align-items: center; gap: 6px; padding: 0 8px; border: 1px solid; border-radius: 5px; white-space: nowrap; }
+.app-badge strong { font-size: 11px; font-weight: 750; }
+.app-badge small { font-size: 10px; font-weight: 600; }
+.app-badge.observed { color: #92400e; background: #fffbeb; border-color: #fde68a; }
+.app-badge.confirmed { color: #047857; background: #ecfdf5; border-color: #a7f3d0; }
+:root[data-theme="dark"] .app-badge.observed { color: #fcd34d; background: rgba(245, 158, 11, .12); border-color: rgba(245, 158, 11, .3); }
+:root[data-theme="dark"] .app-badge.confirmed { color: #6ee7b7; background: rgba(16, 185, 129, .12); border-color: rgba(16, 185, 129, .3); }
 .task-pane { min-height: 390px; padding: 24px; }
 .task-header { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding-bottom: 20px; border-bottom: 1px solid var(--border-soft); }
 .task-header h3 { margin: 0; color: var(--text); font-size: 16px; font-weight: 700; }

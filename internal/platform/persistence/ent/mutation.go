@@ -16,6 +16,7 @@ import (
 	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/authloginevent"
 	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/authsession"
 	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/authuser"
+	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/mailaliasappstate"
 	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/mailboxhiddenmessage"
 	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/mailboxmessage"
 	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/mailboxsyncstate"
@@ -36,6 +37,7 @@ const (
 	TypeAuthLoginEvent       = "AuthLoginEvent"
 	TypeAuthSession          = "AuthSession"
 	TypeAuthUser             = "AuthUser"
+	TypeMailAliasAppState    = "MailAliasAppState"
 	TypeMailboxHiddenMessage = "MailboxHiddenMessage"
 	TypeMailboxMessage       = "MailboxMessage"
 	TypeMailboxSyncState     = "MailboxSyncState"
@@ -4157,6 +4159,1144 @@ func (m *AuthUserMutation) ClearEdge(name string) error {
 // It returns an error if the edge is not defined in the schema.
 func (m *AuthUserMutation) ResetEdge(name string) error {
 	return fmt.Errorf("unknown AuthUser edge %s", name)
+}
+
+// MailAliasAppStateMutation represents an operation that mutates the MailAliasAppState nodes in the graph.
+type MailAliasAppStateMutation struct {
+	config
+	op                Op
+	typ               string
+	id                *int
+	account_id        *string
+	alias             *string
+	app_key           *string
+	status            *string
+	detected_at       *time.Time
+	detected_uid      *uint64
+	adddetected_uid   *int64
+	detected_subject  *string
+	detected_sender   *string
+	confirmed_at      *time.Time
+	confirmed_uid     *uint64
+	addconfirmed_uid  *int64
+	confirmed_subject *string
+	confirmed_sender  *string
+	created_at        *time.Time
+	updated_at        *time.Time
+	clearedFields     map[string]struct{}
+	done              bool
+	oldValue          func(context.Context) (*MailAliasAppState, error)
+	predicates        []predicate.MailAliasAppState
+}
+
+var _ ent.Mutation = (*MailAliasAppStateMutation)(nil)
+
+// mailaliasappstateOption allows management of the mutation configuration using functional options.
+type mailaliasappstateOption func(*MailAliasAppStateMutation)
+
+// newMailAliasAppStateMutation creates new mutation for the MailAliasAppState entity.
+func newMailAliasAppStateMutation(c config, op Op, opts ...mailaliasappstateOption) *MailAliasAppStateMutation {
+	m := &MailAliasAppStateMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeMailAliasAppState,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withMailAliasAppStateID sets the ID field of the mutation.
+func withMailAliasAppStateID(id int) mailaliasappstateOption {
+	return func(m *MailAliasAppStateMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *MailAliasAppState
+		)
+		m.oldValue = func(ctx context.Context) (*MailAliasAppState, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().MailAliasAppState.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withMailAliasAppState sets the old MailAliasAppState of the mutation.
+func withMailAliasAppState(node *MailAliasAppState) mailaliasappstateOption {
+	return func(m *MailAliasAppStateMutation) {
+		m.oldValue = func(context.Context) (*MailAliasAppState, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m MailAliasAppStateMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m MailAliasAppStateMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *MailAliasAppStateMutation) ID() (id int, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *MailAliasAppStateMutation) IDs(ctx context.Context) ([]int, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []int{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().MailAliasAppState.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetAccountID sets the "account_id" field.
+func (m *MailAliasAppStateMutation) SetAccountID(s string) {
+	m.account_id = &s
+}
+
+// AccountID returns the value of the "account_id" field in the mutation.
+func (m *MailAliasAppStateMutation) AccountID() (r string, exists bool) {
+	v := m.account_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAccountID returns the old "account_id" field's value of the MailAliasAppState entity.
+// If the MailAliasAppState object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *MailAliasAppStateMutation) OldAccountID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAccountID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAccountID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAccountID: %w", err)
+	}
+	return oldValue.AccountID, nil
+}
+
+// ResetAccountID resets all changes to the "account_id" field.
+func (m *MailAliasAppStateMutation) ResetAccountID() {
+	m.account_id = nil
+}
+
+// SetAlias sets the "alias" field.
+func (m *MailAliasAppStateMutation) SetAlias(s string) {
+	m.alias = &s
+}
+
+// Alias returns the value of the "alias" field in the mutation.
+func (m *MailAliasAppStateMutation) Alias() (r string, exists bool) {
+	v := m.alias
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAlias returns the old "alias" field's value of the MailAliasAppState entity.
+// If the MailAliasAppState object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *MailAliasAppStateMutation) OldAlias(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAlias is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAlias requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAlias: %w", err)
+	}
+	return oldValue.Alias, nil
+}
+
+// ResetAlias resets all changes to the "alias" field.
+func (m *MailAliasAppStateMutation) ResetAlias() {
+	m.alias = nil
+}
+
+// SetAppKey sets the "app_key" field.
+func (m *MailAliasAppStateMutation) SetAppKey(s string) {
+	m.app_key = &s
+}
+
+// AppKey returns the value of the "app_key" field in the mutation.
+func (m *MailAliasAppStateMutation) AppKey() (r string, exists bool) {
+	v := m.app_key
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAppKey returns the old "app_key" field's value of the MailAliasAppState entity.
+// If the MailAliasAppState object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *MailAliasAppStateMutation) OldAppKey(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAppKey is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAppKey requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAppKey: %w", err)
+	}
+	return oldValue.AppKey, nil
+}
+
+// ResetAppKey resets all changes to the "app_key" field.
+func (m *MailAliasAppStateMutation) ResetAppKey() {
+	m.app_key = nil
+}
+
+// SetStatus sets the "status" field.
+func (m *MailAliasAppStateMutation) SetStatus(s string) {
+	m.status = &s
+}
+
+// Status returns the value of the "status" field in the mutation.
+func (m *MailAliasAppStateMutation) Status() (r string, exists bool) {
+	v := m.status
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldStatus returns the old "status" field's value of the MailAliasAppState entity.
+// If the MailAliasAppState object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *MailAliasAppStateMutation) OldStatus(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldStatus is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldStatus requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldStatus: %w", err)
+	}
+	return oldValue.Status, nil
+}
+
+// ResetStatus resets all changes to the "status" field.
+func (m *MailAliasAppStateMutation) ResetStatus() {
+	m.status = nil
+}
+
+// SetDetectedAt sets the "detected_at" field.
+func (m *MailAliasAppStateMutation) SetDetectedAt(t time.Time) {
+	m.detected_at = &t
+}
+
+// DetectedAt returns the value of the "detected_at" field in the mutation.
+func (m *MailAliasAppStateMutation) DetectedAt() (r time.Time, exists bool) {
+	v := m.detected_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldDetectedAt returns the old "detected_at" field's value of the MailAliasAppState entity.
+// If the MailAliasAppState object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *MailAliasAppStateMutation) OldDetectedAt(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldDetectedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldDetectedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldDetectedAt: %w", err)
+	}
+	return oldValue.DetectedAt, nil
+}
+
+// ClearDetectedAt clears the value of the "detected_at" field.
+func (m *MailAliasAppStateMutation) ClearDetectedAt() {
+	m.detected_at = nil
+	m.clearedFields[mailaliasappstate.FieldDetectedAt] = struct{}{}
+}
+
+// DetectedAtCleared returns if the "detected_at" field was cleared in this mutation.
+func (m *MailAliasAppStateMutation) DetectedAtCleared() bool {
+	_, ok := m.clearedFields[mailaliasappstate.FieldDetectedAt]
+	return ok
+}
+
+// ResetDetectedAt resets all changes to the "detected_at" field.
+func (m *MailAliasAppStateMutation) ResetDetectedAt() {
+	m.detected_at = nil
+	delete(m.clearedFields, mailaliasappstate.FieldDetectedAt)
+}
+
+// SetDetectedUID sets the "detected_uid" field.
+func (m *MailAliasAppStateMutation) SetDetectedUID(u uint64) {
+	m.detected_uid = &u
+	m.adddetected_uid = nil
+}
+
+// DetectedUID returns the value of the "detected_uid" field in the mutation.
+func (m *MailAliasAppStateMutation) DetectedUID() (r uint64, exists bool) {
+	v := m.detected_uid
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldDetectedUID returns the old "detected_uid" field's value of the MailAliasAppState entity.
+// If the MailAliasAppState object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *MailAliasAppStateMutation) OldDetectedUID(ctx context.Context) (v uint64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldDetectedUID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldDetectedUID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldDetectedUID: %w", err)
+	}
+	return oldValue.DetectedUID, nil
+}
+
+// AddDetectedUID adds u to the "detected_uid" field.
+func (m *MailAliasAppStateMutation) AddDetectedUID(u int64) {
+	if m.adddetected_uid != nil {
+		*m.adddetected_uid += u
+	} else {
+		m.adddetected_uid = &u
+	}
+}
+
+// AddedDetectedUID returns the value that was added to the "detected_uid" field in this mutation.
+func (m *MailAliasAppStateMutation) AddedDetectedUID() (r int64, exists bool) {
+	v := m.adddetected_uid
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetDetectedUID resets all changes to the "detected_uid" field.
+func (m *MailAliasAppStateMutation) ResetDetectedUID() {
+	m.detected_uid = nil
+	m.adddetected_uid = nil
+}
+
+// SetDetectedSubject sets the "detected_subject" field.
+func (m *MailAliasAppStateMutation) SetDetectedSubject(s string) {
+	m.detected_subject = &s
+}
+
+// DetectedSubject returns the value of the "detected_subject" field in the mutation.
+func (m *MailAliasAppStateMutation) DetectedSubject() (r string, exists bool) {
+	v := m.detected_subject
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldDetectedSubject returns the old "detected_subject" field's value of the MailAliasAppState entity.
+// If the MailAliasAppState object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *MailAliasAppStateMutation) OldDetectedSubject(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldDetectedSubject is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldDetectedSubject requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldDetectedSubject: %w", err)
+	}
+	return oldValue.DetectedSubject, nil
+}
+
+// ResetDetectedSubject resets all changes to the "detected_subject" field.
+func (m *MailAliasAppStateMutation) ResetDetectedSubject() {
+	m.detected_subject = nil
+}
+
+// SetDetectedSender sets the "detected_sender" field.
+func (m *MailAliasAppStateMutation) SetDetectedSender(s string) {
+	m.detected_sender = &s
+}
+
+// DetectedSender returns the value of the "detected_sender" field in the mutation.
+func (m *MailAliasAppStateMutation) DetectedSender() (r string, exists bool) {
+	v := m.detected_sender
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldDetectedSender returns the old "detected_sender" field's value of the MailAliasAppState entity.
+// If the MailAliasAppState object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *MailAliasAppStateMutation) OldDetectedSender(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldDetectedSender is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldDetectedSender requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldDetectedSender: %w", err)
+	}
+	return oldValue.DetectedSender, nil
+}
+
+// ResetDetectedSender resets all changes to the "detected_sender" field.
+func (m *MailAliasAppStateMutation) ResetDetectedSender() {
+	m.detected_sender = nil
+}
+
+// SetConfirmedAt sets the "confirmed_at" field.
+func (m *MailAliasAppStateMutation) SetConfirmedAt(t time.Time) {
+	m.confirmed_at = &t
+}
+
+// ConfirmedAt returns the value of the "confirmed_at" field in the mutation.
+func (m *MailAliasAppStateMutation) ConfirmedAt() (r time.Time, exists bool) {
+	v := m.confirmed_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldConfirmedAt returns the old "confirmed_at" field's value of the MailAliasAppState entity.
+// If the MailAliasAppState object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *MailAliasAppStateMutation) OldConfirmedAt(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldConfirmedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldConfirmedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldConfirmedAt: %w", err)
+	}
+	return oldValue.ConfirmedAt, nil
+}
+
+// ClearConfirmedAt clears the value of the "confirmed_at" field.
+func (m *MailAliasAppStateMutation) ClearConfirmedAt() {
+	m.confirmed_at = nil
+	m.clearedFields[mailaliasappstate.FieldConfirmedAt] = struct{}{}
+}
+
+// ConfirmedAtCleared returns if the "confirmed_at" field was cleared in this mutation.
+func (m *MailAliasAppStateMutation) ConfirmedAtCleared() bool {
+	_, ok := m.clearedFields[mailaliasappstate.FieldConfirmedAt]
+	return ok
+}
+
+// ResetConfirmedAt resets all changes to the "confirmed_at" field.
+func (m *MailAliasAppStateMutation) ResetConfirmedAt() {
+	m.confirmed_at = nil
+	delete(m.clearedFields, mailaliasappstate.FieldConfirmedAt)
+}
+
+// SetConfirmedUID sets the "confirmed_uid" field.
+func (m *MailAliasAppStateMutation) SetConfirmedUID(u uint64) {
+	m.confirmed_uid = &u
+	m.addconfirmed_uid = nil
+}
+
+// ConfirmedUID returns the value of the "confirmed_uid" field in the mutation.
+func (m *MailAliasAppStateMutation) ConfirmedUID() (r uint64, exists bool) {
+	v := m.confirmed_uid
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldConfirmedUID returns the old "confirmed_uid" field's value of the MailAliasAppState entity.
+// If the MailAliasAppState object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *MailAliasAppStateMutation) OldConfirmedUID(ctx context.Context) (v uint64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldConfirmedUID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldConfirmedUID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldConfirmedUID: %w", err)
+	}
+	return oldValue.ConfirmedUID, nil
+}
+
+// AddConfirmedUID adds u to the "confirmed_uid" field.
+func (m *MailAliasAppStateMutation) AddConfirmedUID(u int64) {
+	if m.addconfirmed_uid != nil {
+		*m.addconfirmed_uid += u
+	} else {
+		m.addconfirmed_uid = &u
+	}
+}
+
+// AddedConfirmedUID returns the value that was added to the "confirmed_uid" field in this mutation.
+func (m *MailAliasAppStateMutation) AddedConfirmedUID() (r int64, exists bool) {
+	v := m.addconfirmed_uid
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetConfirmedUID resets all changes to the "confirmed_uid" field.
+func (m *MailAliasAppStateMutation) ResetConfirmedUID() {
+	m.confirmed_uid = nil
+	m.addconfirmed_uid = nil
+}
+
+// SetConfirmedSubject sets the "confirmed_subject" field.
+func (m *MailAliasAppStateMutation) SetConfirmedSubject(s string) {
+	m.confirmed_subject = &s
+}
+
+// ConfirmedSubject returns the value of the "confirmed_subject" field in the mutation.
+func (m *MailAliasAppStateMutation) ConfirmedSubject() (r string, exists bool) {
+	v := m.confirmed_subject
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldConfirmedSubject returns the old "confirmed_subject" field's value of the MailAliasAppState entity.
+// If the MailAliasAppState object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *MailAliasAppStateMutation) OldConfirmedSubject(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldConfirmedSubject is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldConfirmedSubject requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldConfirmedSubject: %w", err)
+	}
+	return oldValue.ConfirmedSubject, nil
+}
+
+// ResetConfirmedSubject resets all changes to the "confirmed_subject" field.
+func (m *MailAliasAppStateMutation) ResetConfirmedSubject() {
+	m.confirmed_subject = nil
+}
+
+// SetConfirmedSender sets the "confirmed_sender" field.
+func (m *MailAliasAppStateMutation) SetConfirmedSender(s string) {
+	m.confirmed_sender = &s
+}
+
+// ConfirmedSender returns the value of the "confirmed_sender" field in the mutation.
+func (m *MailAliasAppStateMutation) ConfirmedSender() (r string, exists bool) {
+	v := m.confirmed_sender
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldConfirmedSender returns the old "confirmed_sender" field's value of the MailAliasAppState entity.
+// If the MailAliasAppState object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *MailAliasAppStateMutation) OldConfirmedSender(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldConfirmedSender is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldConfirmedSender requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldConfirmedSender: %w", err)
+	}
+	return oldValue.ConfirmedSender, nil
+}
+
+// ResetConfirmedSender resets all changes to the "confirmed_sender" field.
+func (m *MailAliasAppStateMutation) ResetConfirmedSender() {
+	m.confirmed_sender = nil
+}
+
+// SetCreatedAt sets the "created_at" field.
+func (m *MailAliasAppStateMutation) SetCreatedAt(t time.Time) {
+	m.created_at = &t
+}
+
+// CreatedAt returns the value of the "created_at" field in the mutation.
+func (m *MailAliasAppStateMutation) CreatedAt() (r time.Time, exists bool) {
+	v := m.created_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCreatedAt returns the old "created_at" field's value of the MailAliasAppState entity.
+// If the MailAliasAppState object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *MailAliasAppStateMutation) OldCreatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCreatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCreatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCreatedAt: %w", err)
+	}
+	return oldValue.CreatedAt, nil
+}
+
+// ResetCreatedAt resets all changes to the "created_at" field.
+func (m *MailAliasAppStateMutation) ResetCreatedAt() {
+	m.created_at = nil
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (m *MailAliasAppStateMutation) SetUpdatedAt(t time.Time) {
+	m.updated_at = &t
+}
+
+// UpdatedAt returns the value of the "updated_at" field in the mutation.
+func (m *MailAliasAppStateMutation) UpdatedAt() (r time.Time, exists bool) {
+	v := m.updated_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUpdatedAt returns the old "updated_at" field's value of the MailAliasAppState entity.
+// If the MailAliasAppState object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *MailAliasAppStateMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUpdatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUpdatedAt: %w", err)
+	}
+	return oldValue.UpdatedAt, nil
+}
+
+// ResetUpdatedAt resets all changes to the "updated_at" field.
+func (m *MailAliasAppStateMutation) ResetUpdatedAt() {
+	m.updated_at = nil
+}
+
+// Where appends a list predicates to the MailAliasAppStateMutation builder.
+func (m *MailAliasAppStateMutation) Where(ps ...predicate.MailAliasAppState) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the MailAliasAppStateMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *MailAliasAppStateMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.MailAliasAppState, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *MailAliasAppStateMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *MailAliasAppStateMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (MailAliasAppState).
+func (m *MailAliasAppStateMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *MailAliasAppStateMutation) Fields() []string {
+	fields := make([]string, 0, 14)
+	if m.account_id != nil {
+		fields = append(fields, mailaliasappstate.FieldAccountID)
+	}
+	if m.alias != nil {
+		fields = append(fields, mailaliasappstate.FieldAlias)
+	}
+	if m.app_key != nil {
+		fields = append(fields, mailaliasappstate.FieldAppKey)
+	}
+	if m.status != nil {
+		fields = append(fields, mailaliasappstate.FieldStatus)
+	}
+	if m.detected_at != nil {
+		fields = append(fields, mailaliasappstate.FieldDetectedAt)
+	}
+	if m.detected_uid != nil {
+		fields = append(fields, mailaliasappstate.FieldDetectedUID)
+	}
+	if m.detected_subject != nil {
+		fields = append(fields, mailaliasappstate.FieldDetectedSubject)
+	}
+	if m.detected_sender != nil {
+		fields = append(fields, mailaliasappstate.FieldDetectedSender)
+	}
+	if m.confirmed_at != nil {
+		fields = append(fields, mailaliasappstate.FieldConfirmedAt)
+	}
+	if m.confirmed_uid != nil {
+		fields = append(fields, mailaliasappstate.FieldConfirmedUID)
+	}
+	if m.confirmed_subject != nil {
+		fields = append(fields, mailaliasappstate.FieldConfirmedSubject)
+	}
+	if m.confirmed_sender != nil {
+		fields = append(fields, mailaliasappstate.FieldConfirmedSender)
+	}
+	if m.created_at != nil {
+		fields = append(fields, mailaliasappstate.FieldCreatedAt)
+	}
+	if m.updated_at != nil {
+		fields = append(fields, mailaliasappstate.FieldUpdatedAt)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *MailAliasAppStateMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case mailaliasappstate.FieldAccountID:
+		return m.AccountID()
+	case mailaliasappstate.FieldAlias:
+		return m.Alias()
+	case mailaliasappstate.FieldAppKey:
+		return m.AppKey()
+	case mailaliasappstate.FieldStatus:
+		return m.Status()
+	case mailaliasappstate.FieldDetectedAt:
+		return m.DetectedAt()
+	case mailaliasappstate.FieldDetectedUID:
+		return m.DetectedUID()
+	case mailaliasappstate.FieldDetectedSubject:
+		return m.DetectedSubject()
+	case mailaliasappstate.FieldDetectedSender:
+		return m.DetectedSender()
+	case mailaliasappstate.FieldConfirmedAt:
+		return m.ConfirmedAt()
+	case mailaliasappstate.FieldConfirmedUID:
+		return m.ConfirmedUID()
+	case mailaliasappstate.FieldConfirmedSubject:
+		return m.ConfirmedSubject()
+	case mailaliasappstate.FieldConfirmedSender:
+		return m.ConfirmedSender()
+	case mailaliasappstate.FieldCreatedAt:
+		return m.CreatedAt()
+	case mailaliasappstate.FieldUpdatedAt:
+		return m.UpdatedAt()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *MailAliasAppStateMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case mailaliasappstate.FieldAccountID:
+		return m.OldAccountID(ctx)
+	case mailaliasappstate.FieldAlias:
+		return m.OldAlias(ctx)
+	case mailaliasappstate.FieldAppKey:
+		return m.OldAppKey(ctx)
+	case mailaliasappstate.FieldStatus:
+		return m.OldStatus(ctx)
+	case mailaliasappstate.FieldDetectedAt:
+		return m.OldDetectedAt(ctx)
+	case mailaliasappstate.FieldDetectedUID:
+		return m.OldDetectedUID(ctx)
+	case mailaliasappstate.FieldDetectedSubject:
+		return m.OldDetectedSubject(ctx)
+	case mailaliasappstate.FieldDetectedSender:
+		return m.OldDetectedSender(ctx)
+	case mailaliasappstate.FieldConfirmedAt:
+		return m.OldConfirmedAt(ctx)
+	case mailaliasappstate.FieldConfirmedUID:
+		return m.OldConfirmedUID(ctx)
+	case mailaliasappstate.FieldConfirmedSubject:
+		return m.OldConfirmedSubject(ctx)
+	case mailaliasappstate.FieldConfirmedSender:
+		return m.OldConfirmedSender(ctx)
+	case mailaliasappstate.FieldCreatedAt:
+		return m.OldCreatedAt(ctx)
+	case mailaliasappstate.FieldUpdatedAt:
+		return m.OldUpdatedAt(ctx)
+	}
+	return nil, fmt.Errorf("unknown MailAliasAppState field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *MailAliasAppStateMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case mailaliasappstate.FieldAccountID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAccountID(v)
+		return nil
+	case mailaliasappstate.FieldAlias:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAlias(v)
+		return nil
+	case mailaliasappstate.FieldAppKey:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAppKey(v)
+		return nil
+	case mailaliasappstate.FieldStatus:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetStatus(v)
+		return nil
+	case mailaliasappstate.FieldDetectedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetDetectedAt(v)
+		return nil
+	case mailaliasappstate.FieldDetectedUID:
+		v, ok := value.(uint64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetDetectedUID(v)
+		return nil
+	case mailaliasappstate.FieldDetectedSubject:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetDetectedSubject(v)
+		return nil
+	case mailaliasappstate.FieldDetectedSender:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetDetectedSender(v)
+		return nil
+	case mailaliasappstate.FieldConfirmedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetConfirmedAt(v)
+		return nil
+	case mailaliasappstate.FieldConfirmedUID:
+		v, ok := value.(uint64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetConfirmedUID(v)
+		return nil
+	case mailaliasappstate.FieldConfirmedSubject:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetConfirmedSubject(v)
+		return nil
+	case mailaliasappstate.FieldConfirmedSender:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetConfirmedSender(v)
+		return nil
+	case mailaliasappstate.FieldCreatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCreatedAt(v)
+		return nil
+	case mailaliasappstate.FieldUpdatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUpdatedAt(v)
+		return nil
+	}
+	return fmt.Errorf("unknown MailAliasAppState field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *MailAliasAppStateMutation) AddedFields() []string {
+	var fields []string
+	if m.adddetected_uid != nil {
+		fields = append(fields, mailaliasappstate.FieldDetectedUID)
+	}
+	if m.addconfirmed_uid != nil {
+		fields = append(fields, mailaliasappstate.FieldConfirmedUID)
+	}
+	return fields
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *MailAliasAppStateMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	case mailaliasappstate.FieldDetectedUID:
+		return m.AddedDetectedUID()
+	case mailaliasappstate.FieldConfirmedUID:
+		return m.AddedConfirmedUID()
+	}
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *MailAliasAppStateMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	case mailaliasappstate.FieldDetectedUID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddDetectedUID(v)
+		return nil
+	case mailaliasappstate.FieldConfirmedUID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddConfirmedUID(v)
+		return nil
+	}
+	return fmt.Errorf("unknown MailAliasAppState numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *MailAliasAppStateMutation) ClearedFields() []string {
+	var fields []string
+	if m.FieldCleared(mailaliasappstate.FieldDetectedAt) {
+		fields = append(fields, mailaliasappstate.FieldDetectedAt)
+	}
+	if m.FieldCleared(mailaliasappstate.FieldConfirmedAt) {
+		fields = append(fields, mailaliasappstate.FieldConfirmedAt)
+	}
+	return fields
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *MailAliasAppStateMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *MailAliasAppStateMutation) ClearField(name string) error {
+	switch name {
+	case mailaliasappstate.FieldDetectedAt:
+		m.ClearDetectedAt()
+		return nil
+	case mailaliasappstate.FieldConfirmedAt:
+		m.ClearConfirmedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown MailAliasAppState nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *MailAliasAppStateMutation) ResetField(name string) error {
+	switch name {
+	case mailaliasappstate.FieldAccountID:
+		m.ResetAccountID()
+		return nil
+	case mailaliasappstate.FieldAlias:
+		m.ResetAlias()
+		return nil
+	case mailaliasappstate.FieldAppKey:
+		m.ResetAppKey()
+		return nil
+	case mailaliasappstate.FieldStatus:
+		m.ResetStatus()
+		return nil
+	case mailaliasappstate.FieldDetectedAt:
+		m.ResetDetectedAt()
+		return nil
+	case mailaliasappstate.FieldDetectedUID:
+		m.ResetDetectedUID()
+		return nil
+	case mailaliasappstate.FieldDetectedSubject:
+		m.ResetDetectedSubject()
+		return nil
+	case mailaliasappstate.FieldDetectedSender:
+		m.ResetDetectedSender()
+		return nil
+	case mailaliasappstate.FieldConfirmedAt:
+		m.ResetConfirmedAt()
+		return nil
+	case mailaliasappstate.FieldConfirmedUID:
+		m.ResetConfirmedUID()
+		return nil
+	case mailaliasappstate.FieldConfirmedSubject:
+		m.ResetConfirmedSubject()
+		return nil
+	case mailaliasappstate.FieldConfirmedSender:
+		m.ResetConfirmedSender()
+		return nil
+	case mailaliasappstate.FieldCreatedAt:
+		m.ResetCreatedAt()
+		return nil
+	case mailaliasappstate.FieldUpdatedAt:
+		m.ResetUpdatedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown MailAliasAppState field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *MailAliasAppStateMutation) AddedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *MailAliasAppStateMutation) AddedIDs(name string) []ent.Value {
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *MailAliasAppStateMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *MailAliasAppStateMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *MailAliasAppStateMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *MailAliasAppStateMutation) EdgeCleared(name string) bool {
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *MailAliasAppStateMutation) ClearEdge(name string) error {
+	return fmt.Errorf("unknown MailAliasAppState unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *MailAliasAppStateMutation) ResetEdge(name string) error {
+	return fmt.Errorf("unknown MailAliasAppState edge %s", name)
 }
 
 // MailboxHiddenMessageMutation represents an operation that mutates the MailboxHiddenMessage nodes in the graph.

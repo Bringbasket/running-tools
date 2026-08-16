@@ -86,13 +86,18 @@ Vue 单文件组件的模板和 TypeScript 逻辑放在对应模块目录内。�
 
 生产邮件模块统一使用 PostgreSQL 主数据源。旧版 `json`/`dual` 仅用于迁移旧部署，
 迁移完成后不再写入 JSON。PostgreSQL 保存账号、Session、Apple Account、任务状态、邮件正文、
-验证码索引、隐藏记录与 IMAP 同步状态；Redis 当前用于多实例 IMAP 同步锁，故障时回退
+验证码索引、应用识别状态、隐藏记录与 IMAP 同步状态；Redis 当前用于多实例 IMAP 同步锁，故障时回退
 本进程锁。Redis 不得作为唯一持久化来源。
 
-会持续增长的数据必须按记录建表：邮件正文和安全 HTML位于 `mailbox_messages`，隐藏记录位于
+会持续增长的数据必须按记录建表：邮件正文和安全 HTML 位于 `mailbox_messages`，隐藏记录位于
 `mailbox_hidden_messages`，分享链接和会话位于 `mail_share_links`、`mail_share_sessions`，
-使用日志位于 `activity_logs`。配置、Session 和任务当前状态按账号存入 `running_state` 的
+邮箱应用识别状态位于 `mail_alias_app_states`，使用日志位于 `activity_logs`。配置、Session 和任务当前状态按账号存入 `running_state` 的
 JSONB 单行，不会生成或追加生产 JSON 文件。
+
+IMAP 同步只对可信发件人与精确主题组合执行应用识别。ChatGPT 注册验证码先写入黄色
+`observed` 状态；同一账号、同一隐私邮箱之后出现登录验证码才升级为绿色 `confirmed`，明确的
+欢迎或首次使用邮件可直接确认。识别结果独立于邮件缓存保存，清理收件箱不会丢失；删除隐私邮箱
+或母号时才清理对应状态。服务启动时仅查询候选主题做幂等历史回填，不扫描全部邮件正文。
 
 收件箱采用双重保留边界：每个隐藏邮箱最多保留按时间排序的最新 100 封，同时每个母号的全部
 邮件仍受 IMAP 设置中的 `cacheMax` 总上限约束；不能把“每邮箱 100 封”理解为绕过账号总上限。
@@ -108,6 +113,7 @@ PostgreSQL
 |-- auth_users / auth_sessions / auth_api_tokens / auth_login_events
 |-- running_state
 |-- mailbox_messages / mailbox_hidden_messages / mailbox_sync_states
+|-- mail_alias_app_states
 |-- mail_share_links / mail_share_sessions
 `-- activity_logs
 

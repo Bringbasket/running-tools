@@ -1,0 +1,1 @@
+DROP INDEX IF EXISTS mailbox_messages_account_subject_lower;

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"sort"
@@ -782,6 +783,10 @@ func (api *routeAPI) listAliases(w http.ResponseWriter, r *http.Request) {
 		api.writeMailError(w, r, err)
 		return
 	}
+	if err := api.mailboxFor(r).EnrichAliasApplications(r.Context(), aliases); err != nil {
+		httpx.WriteError(w, r, http.StatusInternalServerError, "APP_STATE_ERROR", "读取邮箱应用状态失败")
+		return
+	}
 	w.Header().Set("X-Running-Mail-Source", source)
 	httpx.WriteData(w, r, http.StatusOK, aliases)
 }
@@ -876,6 +881,11 @@ func (api *routeAPI) aliasAction(active, deleteAlias bool) http.HandlerFunc {
 		}
 		if aliasAddress != "" && (deleteAlias || !active) {
 			_ = api.sharesFor(r).RevokeForAlias(aliasAddress)
+		}
+		if aliasAddress != "" && deleteAlias {
+			if err := api.mailboxFor(r).DeleteAliasApplications(r.Context(), aliasAddress); err != nil {
+				slog.Warn("邮箱已从 iCloud 删除，但应用状态清理失败", "account_id", api.runtimeFor(r).account.ID, "error", safeErrorText(err))
+			}
 		}
 		httpx.WriteData(w, r, http.StatusOK, result)
 	}
