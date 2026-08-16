@@ -153,6 +153,34 @@ func TestAutoRefreshClampsMinimumInterval(t *testing.T) {
 	}
 }
 
+func TestAutoRefreshUsesAdaptiveWakeDelay(t *testing.T) {
+	root := t.TempDir()
+	service := NewAutoRefresh(root, NewSessionManager(filepath.Join(root, "config.json"), root))
+	disabled := false
+	if _, err := service.Update(&disabled, nil); err != nil {
+		t.Fatal(err)
+	}
+	if delay := service.nextWakeDelay(); delay != autoRefreshIdlePoll {
+		t.Fatalf("disabled delay = %s, want %s", delay, autoRefreshIdlePoll)
+	}
+	enabled := true
+	if _, err := service.Update(&enabled, nil); err != nil {
+		t.Fatal(err)
+	}
+	if delay := service.nextWakeDelay(); delay != autoRefreshMinimumWake {
+		t.Fatalf("first-run delay = %s, want %s", delay, autoRefreshMinimumWake)
+	}
+	now := unixNow()
+	if err := storage.WriteJSON(filepath.Join(root, "auto-refresh.json"), AutoRefreshConfig{
+		Enabled: true, IntervalSeconds: minimumRefreshInterval, LastRunAt: &now,
+	}, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if delay := service.nextWakeDelay(); delay != autoRefreshIdlePoll {
+		t.Fatalf("fallback delay = %s, want %s", delay, autoRefreshIdlePoll)
+	}
+}
+
 func TestAutoRefreshDoesNotDisableOnTransientAppleAccountFailure(t *testing.T) {
 	status := SessionStatus{
 		SessionState: SessionState{NeedsReauth: true},

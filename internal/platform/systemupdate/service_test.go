@@ -39,8 +39,10 @@ func TestUpdateRequiresCompletedCheck(t *testing.T) {
 func TestUpdateQueuesAfterNewRevisionWasFound(t *testing.T) {
 	service := newTestService(t)
 	latest := "revision-b"
+	latestVersion := "0.0.8"
 	writeStatus(t, filepath.Join(service.stateDir, "update-status.json"), Status{
 		State:           "update_available",
+		LatestVersion:   &latestVersion,
 		LatestRevision:  &latest,
 		UpdateAvailable: boolPointer(true),
 	})
@@ -52,15 +54,36 @@ func TestUpdateQueuesAfterNewRevisionWasFound(t *testing.T) {
 	if status.State != "update_queued" || status.Action != "update" {
 		t.Fatalf("Request() status = %#v", status)
 	}
+	if status.CurrentVersion != "0.0.7" || status.CurrentRevision != "revision-a" || status.LatestVersion == nil || *status.LatestVersion != "0.0.8" {
+		t.Fatalf("Request() build metadata = %#v", status)
+	}
 	request := readRequest(t, filepath.Join(service.stateDir, "update-request.json"))
 	if request.Action != "update" {
 		t.Fatalf("request action = %q, want update", request.Action)
 	}
 }
 
+func TestStatusSeparatesVersionFromRevision(t *testing.T) {
+	service := newTestService(t)
+	latestVersion, latestRevision := "0.0.8", "revision-b"
+	writeStatus(t, filepath.Join(service.stateDir, "update-status.json"), Status{
+		State:          "update_available",
+		LatestVersion:  &latestVersion,
+		LatestRevision: &latestRevision,
+	})
+
+	status := service.Status()
+	if status.CurrentVersion != "0.0.7" || status.CurrentRevision != "revision-a" {
+		t.Fatalf("current build metadata = %#v", status)
+	}
+	if status.LatestVersion == nil || *status.LatestVersion != latestVersion || status.UpdateAvailable == nil || !*status.UpdateAvailable {
+		t.Fatalf("latest build metadata = %#v", status)
+	}
+}
+
 func newTestService(t *testing.T) *Service {
 	t.Helper()
-	service := New(t.TempDir(), "revision-a", "https://example.com/repository")
+	service := New(t.TempDir(), "0.0.7", "revision-a", "https://example.com/repository")
 	service.now = func() time.Time { return time.Unix(1_800_000_000, 0) }
 	return service
 }

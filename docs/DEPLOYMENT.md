@@ -101,13 +101,18 @@ systemctl enable --now running-tools-update.path
 ```
 
 升级已有部署时也必须重新安装脚本和两个 systemd 单元，旧版宿主机脚本不支持
-只检查不更新的 `check-request.json`。
+只检查不更新的 `check-request.json`，也不会写入镜像的语义版本字段。
 
 版本面板右上角的检查按钮会调用 `POST /api/system/version/check`。宿主机只拉取
 `latest` 镜像并比较构建标识，不会重启服务。确认存在新构建后，用户点击“立即
 更新”才会调用 `POST /api/system/update`，宿主机随后部署已经构建完成的 `latest`
 镜像，只重新创建 `running-tools` Compose 服务，并等待健康检查。如果新容器未能
 进入健康状态，脚本会恢复上一个镜像。
+
+每次有效构建会生成 `0.0.<GitHub Actions 运行序号>` 形式的应用版本，同时保留完整 commit SHA
+作为构建标识。侧栏显示应用版本，更新检测比较构建标识；更新完成后，前端会从新服务读取版本，
+无需清理浏览器缓存或手工修改 `.env`。不要在服务器 `.env` 中固定设置 `RUNNING_VERSION` 或
+`RUNNING_REVISION`，生产镜像已经内置这两个值。
 
 该脚本使用 `--no-deps app`，只重建当前 Compose 项目的应用容器；Redis、已有 PostgreSQL
 以及服务器上的其他 Docker Compose 项目不会随应用版本更新而重建。

@@ -13,6 +13,8 @@ request_id=""
 request_action="update"
 current_revision=""
 target_revision=""
+current_version=""
+target_version=""
 old_image=""
 image=""
 
@@ -30,11 +32,11 @@ compose() { "${compose_bin[@]}" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" "$@"; 
 
 write_status() {
   local state="$1" message="$2" error="${3:-}"
-  python3 - "$STATUS_FILE" "$state" "$message" "$current_revision" "$target_revision" "$request_id" "$error" "$request_action" <<'PY'
+  python3 - "$STATUS_FILE" "$state" "$message" "$current_version" "$target_version" "$current_revision" "$target_revision" "$request_id" "$error" "$request_action" <<'PY'
 import json, os, sys, time
 from pathlib import Path
 path = Path(sys.argv[1])
-state, message, current, latest, request_id, error, action = sys.argv[2:]
+state, message, current_version, latest_version, current_revision, latest_revision, request_id, error, action = sys.argv[2:]
 existing = {}
 try:
     value = json.loads(path.read_text(encoding="utf-8"))
@@ -43,8 +45,11 @@ except (OSError, json.JSONDecodeError):
     pass
 now = time.time()
 payload = {
-    "state": state, "action": action or existing.get("action"), "message": message, "currentRevision": current or None,
-    "latestRevision": latest or None, "updateAvailable": bool(current and latest and current != latest),
+    "state": state, "action": action or existing.get("action"), "message": message,
+    "currentVersion": current_version or existing.get("currentVersion"),
+    "latestVersion": latest_version or existing.get("latestVersion"),
+    "currentRevision": current_revision or None, "latestRevision": latest_revision or None,
+    "updateAvailable": bool(current_revision and latest_revision and current_revision != latest_revision),
     "requestId": request_id or existing.get("requestId"), "requestedAt": existing.get("requestedAt"),
     "startedAt": existing.get("startedAt"), "finishedAt": existing.get("finishedAt"),
     "updatedAt": now, "error": error or None,
@@ -95,6 +100,7 @@ case "$image" in ghcr.io/bringbasket/running-tools:*) ;; *) echo "unexpected ima
 container="$(compose ps -q app 2>/dev/null || true)"
 if [ -n "$container" ]; then
   old_image="$(docker inspect --format '{{.Image}}' "$container")"
+  current_version="$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "$container" 2>/dev/null || true)"
   current_revision="$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$container" 2>/dev/null || true)"
 fi
 
@@ -105,6 +111,7 @@ else
 fi
 docker pull "$image"
 target_revision="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image" 2>/dev/null || true)"
+target_version="$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "$image" 2>/dev/null || true)"
 if [ -z "$target_revision" ]; then echo "image has no revision label" >&2; exit 1; fi
 
 if [ "$request_action" = "check" ]; then
@@ -126,6 +133,7 @@ compose up -d --no-build --force-recreate --no-deps app
 new_container="$(compose ps -q app)"
 for _ in $(seq 1 30); do
   [ "$(docker inspect --format '{{.State.Health.Status}}' "$new_container" 2>/dev/null || true)" = healthy ] && {
+    current_version="$target_version"
     current_revision="$target_revision"
     write_status success "更新完成"
     exit 0

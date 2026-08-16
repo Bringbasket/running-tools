@@ -3,6 +3,7 @@ package mail
 import (
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/Bringbasket/running-tools/internal/platform/storage"
 )
@@ -47,6 +48,23 @@ func TestAliasQueuePersistsAndControlsJob(t *testing.T) {
 	cancelled, err := reloaded.Cancel(status.JobID)
 	if err != nil || cancelled.Status != "cancelled" {
 		t.Fatalf("cancel failed: %#v %v", cancelled, err)
+	}
+}
+
+func TestAliasQueueUsesAdaptiveWakeDelay(t *testing.T) {
+	root := t.TempDir()
+	queue := NewAliasQueue(root, NewSessionManager(filepath.Join(root, "config.json"), root))
+	if delay := queue.nextWakeDelay(); delay != aliasQueueIdlePoll {
+		t.Fatalf("idle delay = %s, want %s", delay, aliasQueueIdlePoll)
+	}
+	next := unixNow() + 2
+	if err := storage.WriteJSON(queue.path, aliasQueuePersisted{Job: &AliasQueueStatus{
+		JobID: "one", Status: "waiting_retry", NextAttemptAt: &next,
+	}}, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if delay := queue.nextWakeDelay(); delay < time.Second || delay > 2*time.Second {
+		t.Fatalf("scheduled delay = %s, want approximately 2s", delay)
 	}
 }
 

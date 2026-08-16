@@ -15,11 +15,12 @@ import (
 )
 
 const (
-	defaultRefreshInterval  = 600
-	minimumRefreshInterval  = 300
-	autoRefreshPollInterval = 10 * time.Second
-	appleKeepAliveInterval  = 3 * time.Minute
-	appleKeepAliveJitter    = 15
+	defaultRefreshInterval = 600
+	minimumRefreshInterval = 300
+	autoRefreshIdlePoll    = 30 * time.Second
+	autoRefreshMinimumWake = 100 * time.Millisecond
+	appleKeepAliveInterval = 3 * time.Minute
+	appleKeepAliveJitter   = 15
 )
 
 type AutoRefreshConfig struct {
@@ -43,6 +44,7 @@ type AutoRefresh struct {
 	session              *SessionManager
 	stop                 chan struct{}
 	done                 chan struct{}
+	wake                 chan struct{}
 	running              bool
 	defaultInterval      int
 	logs                 *activitylog.Store
@@ -59,7 +61,12 @@ func NewAutoRefresh(stateDir string, session *SessionManager) *AutoRefresh {
 	if configured, err := strconv.Atoi(os.Getenv("MAIL_AUTO_REFRESH_INTERVAL")); err == nil && configured > 0 {
 		interval = max(minimumRefreshInterval, configured)
 	}
-	return &AutoRefresh{path: filepath.Join(stateDir, "auto-refresh.json"), session: session, defaultInterval: interval}
+	return &AutoRefresh{
+		path:            filepath.Join(stateDir, "auto-refresh.json"),
+		session:         session,
+		wake:            make(chan struct{}, 1),
+		defaultInterval: interval,
+	}
 }
 
 func (service *AutoRefresh) Status() AutoRefreshConfig {
@@ -96,7 +103,6 @@ func (service *AutoRefresh) Status() AutoRefreshConfig {
 
 func (service *AutoRefresh) Update(enabled *bool, interval *int) (AutoRefreshConfig, error) {
 	service.mu.Lock()
-	defer service.mu.Unlock()
 	config := service.loadLocked()
 	if enabled != nil {
 		config.Enabled = *enabled
@@ -108,8 +114,11 @@ func (service *AutoRefresh) Update(enabled *bool, interval *int) (AutoRefreshCon
 		config.IntervalSeconds = max(minimumRefreshInterval, *interval)
 	}
 	if err := storage.WriteJSON(service.path, persistentAutoRefresh(config), 0o600); err != nil {
+		service.mu.Unlock()
 		return AutoRefreshConfig{}, err
 	}
+	service.mu.Unlock()
+	service.signalWake()
 	return config, nil
 }
 
@@ -127,6 +136,7 @@ func (service *AutoRefresh) run(ctx context.Context, source string) (map[string]
 	// one in flight so a due tick cannot immediately duplicate a user request.
 	service.runMu.Lock()
 	defer service.runMu.Unlock()
+	defer service.signalWake()
 	status := service.session.Check(ctx)
 	service.mu.Lock()
 	defer service.mu.Unlock()
@@ -204,17 +214,65 @@ func (service *AutoRefresh) Start() {
 	service.mu.Unlock()
 	go func() {
 		defer close(done)
-		ticker := time.NewTicker(autoRefreshPollInterval)
-		defer ticker.Stop()
 		for {
+			timer := time.NewTimer(service.nextWakeDelay())
 			select {
-			case <-ticker.C:
-				service.runIfDue()
+			case <-timer.C:
+			case <-service.wake:
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
 			case <-stop:
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
 				return
 			}
+			service.runIfDue()
 		}
 	}()
+}
+
+func (service *AutoRefresh) nextWakeDelay() time.Duration {
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	config := service.loadLocked()
+	if !config.Enabled {
+		return autoRefreshIdlePoll
+	}
+	now := time.Now()
+	nowUnix := float64(now.UnixNano()) / float64(time.Second)
+	if config.LastRunAt == nil {
+		return autoRefreshMinimumWake
+	}
+	next := *config.LastRunAt + float64(config.IntervalSeconds)
+	if appleDueAt, ok := service.appleKeepAliveDueAtLocked(now); ok {
+		appleDueUnix := float64(appleDueAt.UnixNano()) / float64(time.Second)
+		if appleDueUnix < next {
+			next = appleDueUnix
+		}
+	}
+	seconds := next - nowUnix
+	if seconds <= autoRefreshMinimumWake.Seconds() {
+		return autoRefreshMinimumWake
+	}
+	if seconds >= autoRefreshIdlePoll.Seconds() {
+		return autoRefreshIdlePoll
+	}
+	return time.Duration(seconds * float64(time.Second))
+}
+
+func (service *AutoRefresh) signalWake() {
+	select {
+	case service.wake <- struct{}{}:
+	default:
+	}
 }
 
 func (service *AutoRefresh) Stop() {
@@ -279,6 +337,7 @@ func (service *AutoRefresh) appleKeepAliveDueAtLocked(now time.Time) (time.Time,
 }
 
 func (service *AutoRefresh) recordAppleKeepAliveResult(err error) {
+	defer service.signalWake()
 	level, outcome, summary, detail := "info", "success", "Apple Account 保活成功", ""
 	if err != nil {
 		level, outcome, summary, detail = "warning", "failure", "Apple Account 保活临时失败", safeErrorText(err)

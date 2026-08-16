@@ -207,6 +207,10 @@ ghcr.io/bringbasket/running-tools:latest
 ghcr.io/bringbasket/running-tools:<commit-sha>
 ```
 
+发布版本采用 `0.0.<GitHub Actions 运行序号>`，commit SHA 作为独立构建标识。纯文档修改不会
+触发应用构建；连续推送时只保留最新构建任务。在线更新后，侧栏会从后端读取新版本，无需手工
+修改前端常量或服务器环境变量。
+
 ## 生产部署与更新
 
 生产服务器只需要保留 `.env`、`compose.server.yml` 和 `data/`，无需存放业务源码。应用容器

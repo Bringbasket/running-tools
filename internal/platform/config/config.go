@@ -16,6 +16,7 @@ type Config struct {
 	TrustProxy     bool
 	DataDir        string
 	Version        string
+	Revision       string
 	RepositoryURL  string
 }
 
@@ -27,7 +28,8 @@ func Load() (Config, error) {
 		AuthSessionTTL: time.Duration(envInt("RUNNING_AUTH_SESSION_HOURS", 168)) * time.Hour,
 		TrustProxy:     envBool("RUNNING_TRUST_PROXY", false),
 		DataDir:        filepath.Clean(dataDir),
-		Version:        envOr("RUNNING_REVISION", envOr("RUNNING_VERSION", "0.0.1")),
+		Version:        envOr("RUNNING_VERSION", "0.0.1"),
+		Revision:       envOr("RUNNING_REVISION", "dev"),
 		RepositoryURL:  envOr("RUNNING_REPOSITORY_URL", "https://github.com/Bringbasket/hme-tools"),
 	}
 	if cfg.AdminUsername == "" || len(cfg.AdminUsername) > 64 {

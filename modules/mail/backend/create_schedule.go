@@ -23,6 +23,8 @@ const (
 	maximumCreateAliasInterval  = 3600
 	minimumCreateSchedulePeriod = 60
 	maximumCreateSchedulePeriod = 7 * 24 * 60 * 60
+	createScheduleIdlePoll      = 5 * time.Minute
+	createScheduleMinimumWake   = 100 * time.Millisecond
 )
 
 // CreateScheduleConfig is the persisted configuration and public status of the
@@ -61,6 +63,7 @@ type CreateScheduler struct {
 	session       *SessionManager
 	stop          chan struct{}
 	done          chan struct{}
+	wake          chan struct{}
 	workerRunning bool
 	runLock       chan struct{}
 	cancel        context.CancelFunc
@@ -78,6 +81,7 @@ func NewCreateScheduler(stateDir string, session *SessionManager, gates ...*sync
 		path:       filepath.Join(stateDir, "create-schedule.json"),
 		session:    session,
 		runLock:    make(chan struct{}, 1),
+		wake:       make(chan struct{}, 1),
 		createGate: gate,
 	}
 }
@@ -164,6 +168,7 @@ func (service *CreateScheduler) Update(enabled *bool, batchSize, aliasInterval, 
 	if err != nil {
 		return CreateScheduleConfig{}, err
 	}
+	service.signalWake()
 	return service.Status(), nil
 }
 
@@ -199,17 +204,51 @@ func (service *CreateScheduler) Start() {
 	service.mu.Unlock()
 	go func() {
 		defer close(done)
-		ticker := time.NewTicker(time.Second)
-		defer ticker.Stop()
 		for {
+			timer := time.NewTimer(service.nextWakeDelay())
 			select {
-			case <-ticker.C:
-				service.runIfDue()
+			case <-timer.C:
+			case <-service.wake:
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
 			case <-stop:
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
 				return
 			}
+			service.runIfDue()
 		}
 	}()
+}
+
+func (service *CreateScheduler) nextWakeDelay() time.Duration {
+	status := service.Status()
+	if !status.Enabled || status.Running || status.NextRunAt == nil {
+		return createScheduleIdlePoll
+	}
+	seconds := *status.NextRunAt - unixNow()
+	if seconds <= createScheduleMinimumWake.Seconds() {
+		return createScheduleMinimumWake
+	}
+	if seconds >= createScheduleIdlePoll.Seconds() {
+		return createScheduleIdlePoll
+	}
+	return time.Duration(seconds * float64(time.Second))
+}
+
+func (service *CreateScheduler) signalWake() {
+	select {
+	case service.wake <- struct{}{}:
+	default:
+	}
 }
 
 func (service *CreateScheduler) Shutdown() {
@@ -258,6 +297,7 @@ func (service *CreateScheduler) startRun(manual bool) error {
 			service.mu.Lock()
 			service.cancel = nil
 			service.mu.Unlock()
+			service.signalWake()
 		}()
 		service.runBatch(ctx, manual)
 	}()

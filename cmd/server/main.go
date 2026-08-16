@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -21,6 +22,11 @@ import (
 	mail "github.com/Bringbasket/running-tools/modules/mail/backend"
 )
 
+var (
+	buildVersion  string
+	buildRevision string
+)
+
 func main() {
 	// Local development reads .env; deployed environments continue to override it.
 	_ = platformconfig.LoadEnvFile(".env")
@@ -29,6 +35,12 @@ func main() {
 	if err != nil {
 		logger.Error("invalid configuration", "error", err)
 		os.Exit(1)
+	}
+	if value := strings.TrimSpace(buildVersion); value != "" {
+		config.Version = value
+	}
+	if value := strings.TrimSpace(buildRevision); value != "" {
+		config.Revision = value
 	}
 	persistenceConfig, err := persistence.LoadConfig()
 	if err != nil {
@@ -78,7 +90,7 @@ func main() {
 		}
 	}()
 
-	updates := systemupdate.New(filepath.Join(config.DataDir, "system"), config.Version, config.RepositoryURL)
+	updates := systemupdate.New(filepath.Join(config.DataDir, "system"), config.Version, config.Revision, config.RepositoryURL)
 	systemupdate.RegisterRoutes(mux, passthrough, updates)
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
@@ -126,7 +138,7 @@ func main() {
 		}
 	}()
 	go func() {
-		logger.Info("server listening", "address", config.Address, "version", config.Version)
+		logger.Info("server listening", "address", config.Address, "version", config.Version, "revision", config.Revision)
 		if serveErr := server.ListenAndServe(); serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
 			logger.Error("server stopped", "error", serveErr)
 			os.Exit(1)

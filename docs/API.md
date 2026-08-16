@@ -46,6 +46,21 @@ JSON 接口统一使用以下响应结构：
 
 兼容地址：`/v1/system/version`、`/v1/system/version/check`、`/v1/system/update`。
 
+`GET /api/system/version` 同时返回面向用户的版本号和用于精确比较镜像的构建标识：
+
+```json
+{
+  "currentVersion": "0.0.42",
+  "latestVersion": "0.0.43",
+  "currentRevision": "abcdef123456...",
+  "latestRevision": "123456abcdef...",
+  "updateAvailable": true
+}
+```
+
+版本号由 GitHub Actions 运行序号生成；是否存在更新始终比较完整 commit SHA，避免版本文案变化
+影响更新判断。
+
 ### 平台登录
 
 登录请求为 `{"username":"admin","password":"..."}`。成功后服务端设置名为

@@ -88,3 +88,19 @@ func TestCreateSchedulerDoesNotRunDisabledPeriodicTask(t *testing.T) {
 		t.Fatal("disabled scheduler started a batch")
 	}
 }
+
+func TestCreateSchedulerUsesAdaptiveWakeDelay(t *testing.T) {
+	root := t.TempDir()
+	service := NewCreateScheduler(root, NewSessionManager(filepath.Join(root, "config.json"), root))
+	if delay := service.nextWakeDelay(); delay != createScheduleIdlePoll {
+		t.Fatalf("idle delay = %s, want %s", delay, createScheduleIdlePoll)
+	}
+	enabled := true
+	interval := 60
+	if _, err := service.Update(&enabled, nil, nil, &interval, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if delay := service.nextWakeDelay(); delay < 55*time.Second || delay > 60*time.Second {
+		t.Fatalf("scheduled delay = %s, want approximately 60s", delay)
+	}
+}

@@ -24,6 +24,8 @@ type Status struct {
 	State            string   `json:"state"`
 	Action           string   `json:"action,omitempty"`
 	Message          string   `json:"message"`
+	CurrentVersion   string   `json:"currentVersion"`
+	LatestVersion    *string  `json:"latestVersion"`
 	CurrentRevision  string   `json:"currentRevision"`
 	LatestRevision   *string  `json:"latestRevision"`
 	UpdateAvailable  *bool    `json:"updateAvailable"`
@@ -47,18 +49,24 @@ type Service struct {
 	mu            sync.Mutex
 	stateDir      string
 	version       string
+	revision      string
 	repositoryURL string
 	now           func() time.Time
 }
 
-func New(stateDir, version, repositoryURL string) *Service {
+func New(stateDir, version, revision, repositoryURL string) *Service {
 	version = strings.TrimSpace(version)
 	if version == "" {
-		version = "dev"
+		version = "0.0.1"
+	}
+	revision = strings.TrimSpace(revision)
+	if revision == "" {
+		revision = "dev"
 	}
 	return &Service{
 		stateDir:      stateDir,
 		version:       version,
+		revision:      revision,
 		repositoryURL: repositoryURL,
 		now:           time.Now,
 	}
@@ -72,12 +80,14 @@ func (service *Service) Status() Status {
 		status.State = "idle"
 		status.Message = "尚未检查更新"
 	}
-	status.CurrentRevision = service.version
+	status.CurrentVersion = service.version
+	status.CurrentRevision = service.revision
 	status.RepositoryURL = service.repositoryURL
 	if status.LatestRevision != nil && strings.TrimSpace(*status.LatestRevision) != "" {
-		available := strings.TrimSpace(*status.LatestRevision) != service.version
+		available := strings.TrimSpace(*status.LatestRevision) != service.revision
 		status.UpdateAvailable = &available
 	} else {
+		status.LatestVersion = nil
 		status.LatestRevision = nil
 		status.UpdateAvailable = nil
 	}
@@ -131,7 +141,9 @@ func (service *Service) enqueue(action string) (Status, error) {
 		State:            state,
 		Action:           action,
 		Message:          message,
-		CurrentRevision:  service.version,
+		CurrentVersion:   service.version,
+		LatestVersion:    status.LatestVersion,
+		CurrentRevision:  service.revision,
 		LatestRevision:   status.LatestRevision,
 		UpdateAvailable:  status.UpdateAvailable,
 		RequestID:        &requestID,

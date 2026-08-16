@@ -48,6 +48,10 @@ Vite 开发服务器会将 `/api`、`/v1` 和 `/health` 代理到
 Windows 可以直接调用便携版 Go 的 `go.exe`。`scripts/build.ps1` 会执行完整的
 前端构建和 Go 检查。
 
+GitHub Actions 对纯 Markdown、`docs/`、`.env.example`、`.gitignore` 和 `deploy/` 修改跳过
+应用镜像构建；代码或 Docker 构建上下文变化仍执行完整测试。相同分支出现更新提交时，旧构建会
+自动取消。Go 和 Buildx 缓存用于减少重复编译，但不会跳过测试命令。
+
 发布构建先生成 Vite 产物，再使用 `embed` 标签构建单个可执行文件：
 
 ```bash

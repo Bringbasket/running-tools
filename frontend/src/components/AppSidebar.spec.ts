@@ -17,6 +17,8 @@ function version(overrides: Record<string, unknown> = {}) {
   return {
     state: 'idle',
     message: '尚未检查更新',
+    currentVersion: '0.0.7',
+    latestVersion: null,
     currentRevision: 'revision-a',
     latestRevision: null,
     updateAvailable: null,
@@ -42,11 +44,14 @@ async function renderSidebar() {
 describe('AppSidebar version updates', () => {
   beforeEach(() => {
     apiRequest.mockReset()
+    apiRequest.mockResolvedValue(version())
     localStorage.clear()
   })
 
   it('opens the panel without checking or updating', async () => {
     const wrapper = await renderSidebar()
+    await flushPromises()
+    apiRequest.mockClear()
 
     await wrapper.get('.brand-version').trigger('click')
 
@@ -56,8 +61,10 @@ describe('AppSidebar version updates', () => {
   })
 
   it('uses the refresh icon for a check-only request', async () => {
-    apiRequest.mockResolvedValue(version({ state: 'check_queued', action: 'check', canRequestUpdate: false }))
     const wrapper = await renderSidebar()
+    await flushPromises()
+    apiRequest.mockReset()
+    apiRequest.mockResolvedValue(version({ state: 'check_queued', action: 'check', canRequestUpdate: false }))
     await wrapper.get('.brand-version').trigger('click')
 
     await wrapper.get('.version-popover-header .icon-button').trigger('click')
@@ -68,19 +75,23 @@ describe('AppSidebar version updates', () => {
   })
 
   it('offers update only after a check found a new revision', async () => {
+    const wrapper = await renderSidebar()
+    await flushPromises()
+    apiRequest.mockReset()
     apiRequest.mockResolvedValueOnce(version({
       state: 'update_available',
       action: 'check',
+      latestVersion: '0.0.8',
       latestRevision: 'revision-b',
       updateAvailable: true,
     })).mockResolvedValueOnce(version({
       state: 'update_queued',
       action: 'update',
+      latestVersion: '0.0.8',
       latestRevision: 'revision-b',
       updateAvailable: true,
       canRequestUpdate: false,
     }))
-    const wrapper = await renderSidebar()
     await wrapper.get('.brand-version').trigger('click')
     await wrapper.get('.version-popover-header .icon-button').trigger('click')
     await flushPromises()
@@ -94,5 +105,16 @@ describe('AppSidebar version updates', () => {
 
     expect(apiRequest).toHaveBeenCalledTimes(2)
     expect(apiRequest).toHaveBeenLastCalledWith('/api/system/update', { method: 'POST', body: '{}' })
+  })
+
+  it('shows the runtime version returned by the server', async () => {
+    apiRequest.mockResolvedValue(version({ currentVersion: '0.0.42', currentRevision: 'abcdef123456' }))
+    const wrapper = await renderSidebar()
+    await flushPromises()
+
+    expect(wrapper.get('.brand-version').text()).toContain('v0.0.42')
+    await wrapper.get('.brand-version').trigger('click')
+    expect(wrapper.get('.version-popover-header').text()).toContain('v0.0.42')
+    expect(wrapper.get('.version-details').text()).toContain('abcdef12')
   })
 })

@@ -17,6 +17,8 @@ const (
 	defaultAliasQueueSpacing = 3
 	aliasQueueCooldown       = 30 * time.Minute
 	aliasQueueRetry          = time.Minute
+	aliasQueueIdlePoll       = 5 * time.Minute
+	aliasQueueMinimumWake    = 100 * time.Millisecond
 )
 
 // AliasQueueStatus is intentionally free of iCloud cookies and session data.
@@ -139,17 +141,56 @@ func (q *AliasQueue) Stop() {
 }
 
 func (q *AliasQueue) loop(stop <-chan struct{}) {
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
 	for {
+		timer := time.NewTimer(q.nextWakeDelay())
 		select {
-		case <-ticker.C:
-			q.runIfDue()
+		case <-timer.C:
 		case <-q.wake:
-			q.runIfDue()
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
 		case <-stop:
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
 			return
 		}
+		q.runIfDue()
+	}
+}
+
+func (q *AliasQueue) nextWakeDelay() time.Duration {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	state := q.loadLocked()
+	if state.JobID == "" || state.NextAttemptAt == nil {
+		return aliasQueueIdlePoll
+	}
+	switch state.Status {
+	case "queued", "waiting_rate_limit", "waiting_retry":
+	default:
+		return aliasQueueIdlePoll
+	}
+	seconds := *state.NextAttemptAt - unixNow()
+	if seconds <= aliasQueueMinimumWake.Seconds() {
+		return aliasQueueMinimumWake
+	}
+	if seconds >= aliasQueueIdlePoll.Seconds() {
+		return aliasQueueIdlePoll
+	}
+	return time.Duration(seconds * float64(time.Second))
+}
+
+func (q *AliasQueue) signalWake() {
+	select {
+	case q.wake <- struct{}{}:
+	default:
 	}
 }
 
@@ -202,10 +243,7 @@ func (q *AliasQueue) Enqueue(ctx context.Context, base string, count int, note, 
 	if err := q.saveLocked(current); err != nil {
 		return AliasQueueStatus{}, err
 	}
-	select {
-	case q.wake <- struct{}{}:
-	default:
-	}
+	q.signalWake()
 	return publicQueueStatus(current), nil
 }
 
@@ -266,10 +304,7 @@ func (q *AliasQueue) Resume(jobID string, confirmUncertain bool) (AliasQueueStat
 	if err := q.saveLocked(s); err != nil {
 		return AliasQueueStatus{}, err
 	}
-	select {
-	case q.wake <- struct{}{}:
-	default:
-	}
+	q.signalWake()
 	return publicQueueStatus(s), nil
 }
 func (q *AliasQueue) Cancel(jobID string) (AliasQueueStatus, error) {
@@ -324,7 +359,12 @@ func (q *AliasQueue) runIfDue() {
 }
 
 func (q *AliasQueue) run(ctx context.Context, initial AliasQueueStatus) {
-	defer func() { q.mu.Lock(); q.cancel = nil; q.mu.Unlock() }()
+	defer func() {
+		q.mu.Lock()
+		q.cancel = nil
+		q.mu.Unlock()
+		q.signalWake()
+	}()
 	client, err := q.session.Client()
 	if err != nil {
 		q.fail(initial.JobID, err, "SESSION_ERROR", "needs_attention")

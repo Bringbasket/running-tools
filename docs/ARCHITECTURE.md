@@ -48,6 +48,11 @@ Worker、自动创建 Worker、批量队列、IMAP 服务和日志仓库；请�
 选择账号。切换前端当前账号不会停止其他账号的后台任务。账号列表实时汇总各运行时的 Web、
 Apple Account、IMAP 和后台任务状态，不复制持久化健康状态。
 
+自动创建 Worker 和批量队列使用持久化到期时间配合进程内唤醒信号。配置变化、任务完成和重试
+安排会立即重置 Timer；空闲状态只保留五分钟一次的恢复兜底，不允许按账号每秒查询 PostgreSQL。
+Session 自动刷新同样按下一次 Web 检测或 Apple Account 保活期限唤醒；账号状态发生外部变化时，
+最多 30 秒恢复检查一次，不再为每个账号固定执行 10 秒轮询。
+
 每个账号可以在 `mail_accounts.proxy_url` 保存独立代理。代理客户端归账号 Session 管理器所有，
 同时覆盖 Apple SRP 登录、Apple Account 管理态、iCloud Web 请求以及 IMAP/IDLE 收件连接；
 配置代理后任何链路失败都不得静默回退到服务器直连，对外只暴露 `hasProxy`。
@@ -126,6 +131,10 @@ data/system
 Go 容器只能在 `data/system` 中写入更新请求和读取状态。宿主机上的 systemd
 服务负责拉取镜像、重启当前 Compose 项目、执行健康检查和失败回滚。容器不挂载
 `/var/run/docker.sock`，因此业务服务无法操作其他 Docker 容器。
+
+发布镜像分别携带 `org.opencontainers.image.version` 和 `org.opencontainers.image.revision`。
+前者是 `0.0.<Actions 运行序号>` 形式的用户版本，后者是完整 commit SHA；版本界面展示两者，
+更新可用性只比较 revision。
 
 ## 增加新模块
 
