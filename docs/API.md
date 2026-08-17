@@ -182,8 +182,8 @@ PostgreSQL 中对应的 Session/任务状态、邮件缓存、应用识别状态
 }
 ```
 
-`observed` 表示可信 OpenAI 发件人发送了 `Your temporary ChatGPT verification code` 或对应
-OpenAI 主题，前端显示黄色“GPT 已注册”。只有同一邮箱随后收到 `Your temporary ChatGPT login
+`observed` 表示可信 OpenAI 发件人发送了 `Your temporary ChatGPT verification code`、日文
+`ChatGPT の一時的な認証コード` 或对应 OpenAI 主题，前端显示黄色“GPT 已注册”。只有同一邮箱随后收到 `Your temporary ChatGPT login
 code`、`Your temporary OpenAI login code`，或收到 `Welcome to ChatGPT`、`Your first chat was
 just the beginning` 等明确后续邮件时，状态才升级为 `confirmed`，前端显示绿色“GPT 已确认”。
 

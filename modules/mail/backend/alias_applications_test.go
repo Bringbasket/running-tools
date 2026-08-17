@@ -23,6 +23,11 @@ func TestClassifyGPTMessageRequiresTrustedSenderAndKnownSubject(t *testing.T) {
 			kind:    applicationEvidenceRegistration, ok: true,
 		},
 		{
+			name:    "japanese registration message",
+			message: MailMessage{From: "ChatGPT <noreply_at_tm_openai_com_xsyj6606hhjg8a_d9yr5749@icloud.com>", Subject: "ChatGPT の一時的な認証コード"},
+			kind:    applicationEvidenceRegistration, ok: true,
+		},
+		{
 			name:    "login sender",
 			message: MailMessage{From: "OpenAI <noreply@tm.openai.com>", Subject: "Your temporary OpenAI login code"},
 			kind:    applicationEvidenceLogin, ok: true,

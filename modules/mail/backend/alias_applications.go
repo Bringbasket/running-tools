@@ -11,6 +11,7 @@ import (
 	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent"
 	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/mailaliasappstate"
 	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/mailboxmessage"
+	"github.com/Bringbasket/running-tools/internal/platform/persistence/ent/predicate"
 )
 
 const (
@@ -22,6 +23,7 @@ const (
 var gptEvidenceSubjects = []string{
 	"Your temporary ChatGPT verification code",
 	"Your temporary OpenAI verification code",
+	"ChatGPT の一時的な認証コード",
 	"Your temporary ChatGPT login code",
 	"Your temporary OpenAI login code",
 	"Welcome to ChatGPT",
@@ -70,7 +72,7 @@ func classifyGPTMessage(message MailMessage) (applicationEvidenceKind, bool) {
 		return 0, false
 	}
 	switch normalizeEvidenceSubject(message.Subject) {
-	case "your temporary chatgpt verification code", "your temporary openai verification code":
+	case "your temporary chatgpt verification code", "your temporary openai verification code", "chatgpt の一時的な認証コード":
 		return applicationEvidenceRegistration, true
 	case "your temporary chatgpt login code", "your temporary openai login code":
 		return applicationEvidenceLogin, true
@@ -285,16 +287,13 @@ func (store *postgresAliasApplicationStore) DeleteAlias(ctx context.Context, ali
 }
 
 func (store *postgresAliasApplicationStore) Backfill(ctx context.Context) error {
+	subjectPredicates := make([]predicate.MailboxMessage, 0, len(gptEvidenceSubjects))
+	for _, subject := range gptEvidenceSubjects {
+		subjectPredicates = append(subjectPredicates, mailboxmessage.SubjectEqualFold(subject))
+	}
 	rows, err := store.client.MailboxMessage.Query().Where(
 		mailboxmessage.AccountIDEQ(store.accountID),
-		mailboxmessage.Or(
-			mailboxmessage.SubjectEqualFold(gptEvidenceSubjects[0]),
-			mailboxmessage.SubjectEqualFold(gptEvidenceSubjects[1]),
-			mailboxmessage.SubjectEqualFold(gptEvidenceSubjects[2]),
-			mailboxmessage.SubjectEqualFold(gptEvidenceSubjects[3]),
-			mailboxmessage.SubjectEqualFold(gptEvidenceSubjects[4]),
-			mailboxmessage.SubjectEqualFold(gptEvidenceSubjects[5]),
-		),
+		mailboxmessage.Or(subjectPredicates...),
 	).Select(
 		mailboxmessage.FieldUID,
 		mailboxmessage.FieldAliases,
